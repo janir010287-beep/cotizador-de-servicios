@@ -139,7 +139,7 @@ const DEF = {
   ],
   /* Fotos 360° con GPS: 1 día de trabajo cubre "haDia" hectáreas y "fotosDia" fotos.
      comida y alojamiento son valores de ejemplo: ajústalos en la pestaña Precios. */
-  foto: { haDia: 3, fotosDia: 21, precioDia: 700, comida: 60, alojamiento: 80, subida: 0, mens: 30,
+  foto: { haDia: 3, fotosDia: 21, precioDia: 700, porHa: 250, resta: 50, comida: 60, alojamiento: 80, subida: 0, mens: 30,
     /* Recorrido: mientras más separados estén los puntos, menos fotos se toman por día */
     niveles: [
       { id: "n1", nombre: "Compacto (puntos cercanos)", fotosDia: 21, extra: 0  },
@@ -219,9 +219,11 @@ function calc() {
     const dias = q.foto.dias > 0 ? +q.foto.dias : Math.max(1, Math.ceil(fotos / (niv.fotosDia || 1)));
     const diasBase = Math.max(1, Math.ceil(fotos / (nivBase.fotosDia || 1)));
     const pl = n => n > 1 ? "s" : "";
+    /* Precio base: hasta haDia hectáreas = precioDia; más grande = porHa × ha − resta (ej. 250×h − 50). Sin hectáreas: días × precioDia */
+    const precioHa = ha > 0 ? (ha <= (+F.haDia || 3) ? +F.precioDia : Math.max(+F.precioDia, (+F.porHa || 0) * ha - (+F.resta || 0))) : dias * F.precioDia;
     L.push({
       c: (pk ? pk.nombre + " · " : "") + `Fotos 360° con GPS verificadas y ubicadas en el plano (${ha > 0 ? ha + " ha · " : ""}${fotos} fotos · ${dias} día${pl(dias)})`,
-      impl: pk ? pk.precio : dias * F.precioDia + fotos * (F.subida || 0),
+      impl: pk ? pk.precio : precioHa + fotos * (F.subida || 0),
       mens: pk ? pk.mens : (+F.mens || 0)
     });
     if (pk && dias > diasBase) L.push({ c: `Días adicionales por recorrido (${niv.nombre}) ×${dias - diasBase}`, impl: (dias - diasBase) * F.precioDia, mens: 0 });
@@ -352,7 +354,7 @@ function renderForm() {
       </div>
       <label class="chk" style="margin-top:8px"><input type="checkbox" data-ft="aloj" ${q.foto.aloj ? "checked" : ""}>Cobrar alojamiento</label>
       <label class="chk"><input type="checkbox" data-ft="comida" ${q.foto.comida ? "checked" : ""}>Cobrar alimentación</label>
-      <div class="hint">Base: ${cfg.foto.haDia} ha ≈ ${cfg.foto.fotosDia} fotos ≈ 1 día (S/ ${cfg.foto.precioDia}). Si el cliente pide pocas fotos en un terreno grande, escribe cuántas y elige el recorrido: los días se calculan según la distancia entre puntos.</div>
+      <div class="hint">Hasta ${cfg.foto.haDia} ha = S/ ${cfg.foto.precioDia}. Más de ${cfg.foto.haDia} ha = ${cfg.foto.porHa} × ha − ${cfg.foto.resta}. Si el cliente pide pocas fotos en un terreno grande, escribe cuántas y elige el recorrido: los días se calculan según la distancia entre puntos.</div>
     </div>
     <div class="card"><h3>4 · Otros conceptos (a pedido del cliente)</h3><div id="cust"></div>
       <button class="b sec" data-act="addcu">+ Agregar concepto</button></div>
@@ -429,7 +431,7 @@ function renderConfig() {
 
   <div class="card"><h3>Fotos 360° con GPS</h3><div class="row">
     ${f("Hectáreas por día (solo para estimar fotos si el cliente no dice cuántas)", "foto.haDia")}${f("Fotos por hectárea-día base (fotos que caben en esas hectáreas)", "foto.fotosDia")}
-    ${f("Precio por día (S/)", "foto.precioDia")}${f("Alimentación por día (S/)", "foto.comida")}
+    ${f("Precio hasta las hectáreas por día (S/)", "foto.precioDia")}${f("Terreno grande: precio por hectárea (S/)", "foto.porHa")}${f("Terreno grande: descuento fijo (S/)", "foto.resta")}${f("Alimentación por día (S/)", "foto.comida")}
     ${f("Alojamiento por noche (S/)", "foto.alojamiento")}${f("Subida al plano por foto (S/, 0 si va incluida)", "foto.subida")}
     ${f("Mantenimiento mensual 360° a medida (S/)", "foto.mens")}
   </div>
