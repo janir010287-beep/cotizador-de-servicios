@@ -112,8 +112,11 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 const DEF = {
   marca: "Tu nombre o marca",
   contacto: "WhatsApp: 9XX XXX XXX",
+  ver: 2,
   adelanto: 50,
-  permanencia: 6,
+  permanencia: 12,
+  credPct: 50,     /* credicontado: % de la implementación que se paga al inicio */
+  credMeses: 12,   /* credicontado: en cuántos meses se paga el resto */
   validez: 15,
   tc: 4,
   igv: 0,
@@ -171,6 +174,8 @@ function load() {
 function merge(s) {
   const c = Object.assign(clone(DEF), s);
   c.foto = Object.assign(clone(DEF.foto), s.foto || {});
+  if (!s.ver || s.ver < 2) { c.permanencia = 12; }  /* migración: permanencia mínima ahora es 12 meses */
+  c.ver = 2;
   return c;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
@@ -181,7 +186,7 @@ let q = {
   serv: { plano: true, leads: true, cobranza: true, portal: false },
   leadsTramo: 1, rec: {}, custom: [],
   foto: { on: false, modo: "medida", nivel: "n1", fotos: 0, ha: 3, dias: 0, pasajes: 0, aloj: false, noches: 0, comida: true },
-  descExtra: 0, descTipo: "%", descMens: 0, usd: false, aplicaPaquete: true, notas: ""
+  modalidad: "contado", descExtra: 0, descTipo: "%", descMens: 0, descMensTipo: "%", usd: false, aplicaPaquete: true, notas: ""
 };
 
 const fmt = n => {
@@ -253,13 +258,17 @@ function calc() {
   const baseDesc = subImpl - dPkImpl;
   const dExtra = q.descTipo === "%" ? baseDesc * (+q.descExtra || 0) / 100 : Math.min(+q.descExtra || 0, baseDesc);
   const netImpl = subImpl - dPkImpl - dExtra;
-  const dMens = (subMens - dPkMens) * (+q.descMens || 0) / 100;
+  const baseMensDesc = subMens - dPkMens;
+  const dMens = q.descMensTipo === "S/" ? Math.min(+q.descMens || 0, baseMensDesc) : baseMensDesc * (+q.descMens || 0) / 100;
   const netMens = subMens - dPkMens - dMens;
   const igv = +cfg.igv || 0;
   const iImpl = netImpl * igv / 100, iMens = netMens * igv / 100;
   const totImpl = netImpl + iImpl, totMens = netMens + iMens;
-  const adel = totImpl * (+cfg.adelanto || 0) / 100;
-  return { L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv };
+  const cred = q.modalidad === "credicontado";
+  const credMeses = Math.max(1, Math.round(+cfg.credMeses || 12));
+  const adel = totImpl * (cred ? (+cfg.credPct || 0) : (+cfg.adelanto || 0)) / 100;
+  const cuota = cred ? (totImpl - adel) / credMeses : 0;
+  return { L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv, cred, credMeses, cuota };
 }
 
 /* ============ COTIZACIÓN (vista previa e impresión) ============ */
@@ -290,16 +299,21 @@ function renderQuote() {
         ${r.dExtra > 0 ? `<div class="neg"><span>Descuento comercial${q.descTipo === "%" ? " (" + q.descExtra + "%)" : ""}</span><span>− ${fmt(r.dExtra)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iImpl)}</span></div>` : ""}
         <div class="big"><span>TOTAL</span><span>${fmt(r.totImpl)}</span></div>
+        ${r.cred ? `<div><span>Modalidad</span><span>Credicontado</span></div>
+        <div><span>Inicial (${cfg.credPct}%)</span><span>${fmt(r.adel)}</span></div>
+        <div><span>${r.credMeses} cuotas mensuales de</span><span>${fmt(r.cuota)}</span></div>`
+        : `<div><span>Modalidad</span><span>Contado</span></div>
         <div><span>Adelanto (${cfg.adelanto}%)</span><span>${fmt(r.adel)}</span></div>
-        <div><span>Saldo a la entrega</span><span>${fmt(r.totImpl - r.adel)}</span></div>
+        <div><span>Saldo a la entrega</span><span>${fmt(r.totImpl - r.adel)}</span></div>`}
       </div>
       <div class="box"><h4>MENSUALIDAD</h4>
         <div><span>Subtotal</span><span>${fmt(r.subMens)}</span></div>
         ${r.dPkMens > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.mens}%)</span><span>− ${fmt(r.dPkMens)}</span></div>` : ""}
-        ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial (${q.descMens}%)</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
+        ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial${q.descMensTipo === "S/" ? "" : " (" + q.descMens + "%)"}</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iMens)}</span></div>` : ""}
         <div class="big"><span>TOTAL / MES</span><span>${fmt(r.totMens)}</span></div>
         <div><small>Permanencia mínima: ${cfg.permanencia} meses</small></div>
+        ${r.cred ? `<div><small>Durante los primeros ${r.credMeses} meses pagas la cuota + la mensualidad: <b>${fmt(r.cuota + r.totMens)}</b> al mes.</small></div>` : ""}
       </div>
     </div>
     ${ahorroTxt}
@@ -362,8 +376,12 @@ function renderForm() {
       <div class="row">
         <label>Descuento en implementación<input type="number" min="0" data-q="descExtra" data-num="1" value="${q.descExtra}"></label>
         <label>Tipo de descuento<select data-q="descTipo"><option value="%" ${q.descTipo === "%" ? "selected" : ""}>Porcentaje (%)</option><option value="S/" ${q.descTipo === "S/" ? "selected" : ""}>Monto (S/)</option></select></label>
-        <label>Descuento en mensualidad (%)<input type="number" min="0" max="100" data-q="descMens" data-num="1" value="${q.descMens}"></label>
       </div>
+      <div class="row" style="margin-top:8px">
+        <label>Descuento en mensualidad<input type="number" min="0" data-q="descMens" data-num="1" value="${q.descMens}"></label>
+        <label>Tipo de descuento mensual<select data-q="descMensTipo"><option value="%" ${q.descMensTipo === "%" ? "selected" : ""}>Porcentaje (%)</option><option value="S/" ${q.descMensTipo === "S/" ? "selected" : ""}>Monto (S/)</option></select></label>
+      </div>
+      <label style="margin-top:8px">Modalidad de pago de la implementación<select data-q="modalidad"><option value="contado" ${q.modalidad === "contado" ? "selected" : ""}>Contado (${cfg.adelanto}% y saldo al entregar)</option><option value="credicontado" ${q.modalidad === "credicontado" ? "selected" : ""}>Credicontado (${cfg.credPct}% + ${cfg.credMeses} cuotas)</option></select></label>
       <label class="chk" style="margin-top:8px"><input type="checkbox" data-q="aplicaPaquete" ${q.aplicaPaquete ? "checked" : ""}>Aplicar descuento de paquete</label>
       <label class="chk"><input type="checkbox" data-q="usd" ${q.usd ? "checked" : ""}>Mostrar en dólares (T.C. ${cfg.tc})</label>
       <label style="margin-top:8px">Notas para el cliente<textarea data-q="notas">${esc(q.notas)}</textarea></label>
@@ -402,7 +420,8 @@ function renderConfig() {
   let h = `
   <div class="card"><h3>General</h3><div class="row">
     ${f("Tu nombre / marca", "marca", "text")}${f("Contacto", "contacto", "text")}
-    ${f("Adelanto %", "adelanto")}${f("Permanencia mínima (meses)", "permanencia")}
+    ${f("Adelanto % (contado)", "adelanto")}${f("Permanencia mínima (meses)", "permanencia")}
+    ${f("Credicontado: % inicial", "credPct")}${f("Credicontado: n° de cuotas (meses)", "credMeses")}
     ${f("Validez de la propuesta (días)", "validez")}${f("Tipo de cambio (S/ por US$)", "tc")}
     ${f("IGV % (0 si no aplica)", "igv")}
   </div></div>
@@ -515,7 +534,7 @@ function textoWA() {
   r.L.forEach(x => { s += `• ${x.c}: ${x.impl ? fmt(x.impl) : "—"}${x.mens ? " + " + fmt(x.mens) + "/mes" : ""}\n`; });
   if (r.dPkImpl > 0) s += `\nDescuento paquete ${r.pk.n}: -${fmt(r.dPkImpl)}`;
   if (r.dExtra > 0) s += `\nDescuento comercial: -${fmt(r.dExtra)}`;
-  s += `\n*Implementación: ${fmt(r.totImpl)}* (adelanto ${cfg.adelanto}%: ${fmt(r.adel)})`;
+  s += `\n*Implementación: ${fmt(r.totImpl)}*` + (r.cred ? ` (credicontado: inicial ${cfg.credPct}% = ${fmt(r.adel)} + ${r.credMeses} cuotas de ${fmt(r.cuota)})` : ` (contado: adelanto ${cfg.adelanto}%: ${fmt(r.adel)})`);
   s += `\n*Mensualidad: ${fmt(r.totMens)}* (mínimo ${cfg.permanencia} meses)`;
   s += `\n\nVálida por ${cfg.validez} días.\n${cfg.marca} · ${cfg.contacto}`;
   return s;
