@@ -60,9 +60,27 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 @media(max-width:600px){.cfgrow6{grid-template-columns:1fr 1fr}}
 #mini{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--azul);color:#fff;border-top:2px solid var(--dorado);padding:9px 14px;display:flex;justify-content:space-between;gap:10px;font-size:14px}
 #mini b{color:var(--dorado)}
+#mini.hide{display:none}
 @media(min-width:861px){#mini{display:none}}
 @media(max-width:860px){body{padding-bottom:52px}}
+#conDoc{background:#fff;border:1px solid var(--borde);border-radius:12px;padding:22px;line-height:1.5;font-size:14px;max-width:820px;margin:0 auto}
+#conDoc h1{font-size:19px;text-align:center;color:var(--azul);margin:0 0 14px}
+#conDoc h2{font-size:16px;color:var(--azul);border-bottom:2px solid var(--dorado);padding-bottom:4px;margin:22px 0 10px}
+#conDoc h3{font-size:14.5px;margin:16px 0 6px;color:var(--azul)}
+#conDoc p{margin:0 0 8px;text-align:justify}
+#conDoc table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+#conDoc th{background:var(--azul);color:#fff;text-align:left;padding:6px}
+#conDoc td{padding:6px;border-bottom:1px solid var(--borde);vertical-align:top}
+#conDoc th.r,#conDoc td.r{text-align:right}
+#conDoc tr.tot td{background:#f7f1d9}
+#conDoc ul{margin:4px 0 10px 20px;padding:0}
+.falta{background:#fff3a8;padding:0 3px;border-radius:3px}
+.salto{page-break-after:always}
 @media print{
+  #vCon .noprint{display:none!important}
+  #conDoc{border:0;padding:0;max-width:none;font-size:12px}
+  #conDoc h3{page-break-after:avoid}
+  .falta{background:none;border-bottom:1px solid #000}
   header,.noprint,#form{display:none!important}
   body{background:#fff}
   main{padding:0;max-width:none}
@@ -77,6 +95,7 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
   <nav class="noprint">
     <button data-act="tab" data-t="cot" class="on">Cotizar</button>
     <button data-act="tab" data-t="cfg">Precios</button>
+    <button data-act="tab" data-t="con">Contrato</button>
   </nav>
 </header>
 
@@ -91,6 +110,17 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
       <div id="form"></div>
       <div id="cot"></div>
     </div>
+  </section>
+
+  <!-- VISTA CONTRATO -->
+  <section id="vCon" class="hide">
+    <div class="bar noprint">
+      <button class="b" data-act="printcon">Imprimir / guardar PDF</button>
+      <button class="b sec" data-act="copycon">Copiar texto del contrato</button>
+    </div>
+    <div id="conAviso" class="hint noprint" style="margin-bottom:12px"></div>
+    <div class="noprint" id="conForm"></div>
+    <div id="conDoc"></div>
   </section>
 
   <!-- VISTA PRECIOS -->
@@ -120,6 +150,18 @@ const DEF = {
   validez: 15,
   tc: 4,
   igv: 0,
+  /* Implementación del plano según N° de lotes = PARTE PLANO + PARTE VISUAL.
+     fijo:1 → precio fijo ese tramo; fijo:0 → precio × N° de lotes. Más lotes que el último tramo: se usa el último. */
+  planoLotes: [
+    { max: 200,  fijo: 1, plano: 350,  visual: 450  },
+    { max: 400,  fijo: 0, plano: 1.6,  visual: 2.1  },
+    { max: 600,  fijo: 0, plano: 1.45, visual: 1.95 },
+    { max: 900,  fijo: 0, plano: 1.3,  visual: 1.82 },
+    { max: 1200, fijo: 0, plano: 1.15, visual: 1.72 },
+    { max: 1600, fijo: 0, plano: 1.0,  visual: 1.62 },
+    { max: 99999, fijo: 0, plano: 0.85, visual: 1.53 }  /* 1601 lotes en adelante */
+  ],
+  /* Solo la MENSUALIDAD del plano depende de este tamaño (la implementación sale de planoLotes) */
   plano: [
     { id: "peq", nombre: "Pequeño", max: 150,   impl: 650,  mens: 80  },
     { id: "med", nombre: "Mediano", max: 600,   impl: 1300, mens: 100 },
@@ -195,10 +237,20 @@ const fmt = n => {
 };
 
 /* ============ CÁLCULO ============ */
+function precioPlano(n) {
+  n = +n || 0;
+  const rows = [...(cfg.planoLotes || [])].sort((a, b) => a.max - b.max);
+  if (n <= 0 || !rows.length) return { total: 0, plano: 0, visual: 0, fila: null };
+  const bruto = (r, x) => { const m = r.fijo ? 1 : x; return Math.round(m * r.plano) + Math.round(m * r.visual); };
+  const r = rows.find(x => n <= x.max) || rows[rows.length - 1];
+  const total = bruto(r, n);
+  return { total, fila: r };
+}
+
 function calc() {
   const L = [];
   const t = cfg.plano.find(x => x.id === q.tier) || cfg.plano[0];
-  if (q.serv.plano) L.push({ c: "Plano interactivo (" + t.nombre + ")", impl: t.impl, mens: t.mens, base: true });
+  if (q.serv.plano) L.push({ c: `Plano interactivo (${+q.lotes || 0} lotes)`, impl: precioPlano(q.lotes).total, mens: t.mens, base: true });
   if (q.serv.leads) {
     const tr = cfg.leads.tramos[q.leadsTramo] || cfg.leads.tramos[0];
     L.push({ c: "Control de leads (" + tr.nombre + ")", impl: cfg.leads.impl, mens: tr.mens, base: true });
@@ -343,7 +395,7 @@ function renderForm() {
         <label>Cliente / empresa<input data-q="cliente" value="${esc(q.cliente)}"></label>
         <label>Proyecto<input data-q="proyecto" value="${esc(q.proyecto)}"></label>
         <label>N° de lotes<input type="number" data-q="lotes" data-num="1" value="${q.lotes}"></label>
-        <label>Tamaño del plano<select data-q="tier">${tiers}</select></label>
+        <label>Tamaño (define la mensualidad)<select data-q="tier">${tiers}</select></label>
       </div>
     </div>
     <div class="card"><h3>2 · Servicios</h3>
@@ -426,8 +478,14 @@ function renderConfig() {
     ${f("IGV % (0 si no aplica)", "igv")}
   </div></div>
 
-  <div class="card"><h3>Plano interactivo (por tamaño)</h3>
-    <div class="cfgrow"><small>Nombre</small><small>Hasta N° lotes</small><small>Implementación</small><small>Mensual</small><span></span></div>
+  <div class="card"><h3>Plano interactivo · implementación por N° de lotes</h3>
+    <div class="cfgrow"><small>Hasta N° lotes</small><small>Fijo (1) o por lote (0)</small><small>Parte plano</small><small>Parte visual</small><span></span></div>
+    ${cfg.planoLotes.map((t, i) => `<div class="cfgrow">${cell(`planoLotes.${i}.max`)}${cell(`planoLotes.${i}.fijo`)}${cell(`planoLotes.${i}.plano`)}${cell(`planoLotes.${i}.visual`)}<span></span></div>`).join("")}
+    <small>Total = parte plano + parte visual. Si el tramo es "fijo" es ese monto; si es "por lote" se multiplica por el N° de lotes. Con más lotes que el último tramo se sigue usando el último.</small>
+  </div>
+
+  <div class="card"><h3>Plano interactivo · mensualidad por tamaño</h3>
+    <div class="cfgrow"><small>Nombre</small><small>Hasta N° lotes</small><small>(no se usa)</small><small>Mensual</small><span></span></div>
     ${cfg.plano.map((t, i) => `<div class="cfgrow">${cell(`plano.${i}.nombre`, "text")}${cell(`plano.${i}.max`)}${cell(`plano.${i}.impl`)}${cell(`plano.${i}.mens`)}<span></span></div>`).join("")}
     <small>El último tamaño debe tener un número alto (ej. 99999) para cubrir los planos más grandes.</small>
   </div>
@@ -540,18 +598,30 @@ function textoWA() {
   return s;
 }
 
+document.addEventListener("input", e => {
+  const k = e.target.dataset && e.target.dataset.k; if (!k) return;
+  con[k] = e.target.type === "number" ? (e.target.value === "" ? "" : +e.target.value) : e.target.value;
+  saveCon(); renderContrato();
+});
+
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = b.dataset.act;
   if (a === "tab") {
-    const cot = b.dataset.t === "cot";
+    const t = b.dataset.t, cot = t === "cot";
     $("#vCot").classList.toggle("hide", !cot);
-    $("#vCfg").classList.toggle("hide", cot);
+    $("#vCfg").classList.toggle("hide", t !== "cfg");
+    $("#vCon").classList.toggle("hide", t !== "con");
     $("#mini").classList.toggle("hide", !cot);
     document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
     if (cot) { renderForm(); renderQuote(); }
-  } else if (a === "print") window.print();
-  else if (a === "copy") {
+    if (t === "con") { renderConForm(); renderContrato(); }
+  } else if (a === "print" || a === "printcon") window.print();
+  else if (a === "copycon") {
+    const t = $("#conDoc").innerText;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => alert("Contrato copiado."))
+      .catch(() => { prompt("Copia este texto:", t); });
+  } else if (a === "copy") {
     const t = textoWA();
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => alert("Texto copiado. Pégalo en WhatsApp."))
       .catch(() => { prompt("Copia este texto:", t); });
@@ -576,6 +646,207 @@ document.addEventListener("click", e => {
     }
   }
 });
+
+/* ============ CONTRATO (se genera con los datos de la cotización) ============ */
+const CKEY = "cotizador_contrato_v1";
+const CON_DEF = {
+  pNombre: "", pDni: "", pRuc: "", pDom: "", pCorreo: "", pWsp: "", ciudad: "",
+  cRazon: "", cRuc: "", cDom: "", cRep: "", cDni: "", cPartida: "", cCorreo: "", cWsp: "",
+  ubic: "", inicioMens: "", diaPago: 5,
+  plazoImpl: 15, diasMora: 5, diasResol: 30, diasConserva: 60, horario: "9:00 a 18:00", horasResp: 24,
+  cambiosMes: 5, diasRevision: 5, anosConf: 3, mesesLimite: 3, penalidad: 100
+};
+function loadCon() { try { return Object.assign({}, CON_DEF, JSON.parse(localStorage.getItem(CKEY) || "{}")); } catch (e) { return Object.assign({}, CON_DEF); } }
+let con = loadCon();
+function saveCon() { try { localStorage.setItem(CKEY, JSON.stringify(con)); } catch (e) {} }
+
+const CON_CAMPOS = {
+  "Datos del Prestador (tuyos, se guardan en este navegador)": [
+    ["pNombre", "Tu nombre completo"], ["pDni", "Tu DNI"], ["pRuc", "Tu RUC"], ["pDom", "Tu domicilio y ciudad"],
+    ["pCorreo", "Tu correo"], ["pWsp", "Tu WhatsApp"], ["ciudad", "Ciudad donde firmas y que decide los conflictos"]],
+  "Datos del Cliente": [
+    ["cRazon", "Razón social"], ["cRuc", "RUC del cliente"], ["cDom", "Domicilio del cliente"], ["cRep", "Representante legal"],
+    ["cDni", "DNI del representante"], ["cPartida", "Partida electrónica (poder)"], ["cCorreo", "Correo del cliente"], ["cWsp", "WhatsApp del cliente"]],
+  "Proyecto y fechas": [["ubic", "Ubicación del proyecto"], ["inicioMens", "Fecha de inicio de la mensualidad", "date"], ["diaPago", "Día de pago de cada mes (1-31)", "number"]],
+  "Plazos y límites (puedes dejarlos como están)": [
+    ["plazoImpl", "Días hábiles para entregar", "number"], ["diasRevision", "Días hábiles del cliente para revisar", "number"],
+    ["diasMora", "Días de atraso para suspender", "number"], ["diasResol", "Días de atraso para resolver el contrato", "number"],
+    ["diasConserva", "Días que guardas sus datos tras suspender o terminar", "number"], ["penalidad", "Penalidad por irse antes de la permanencia (% de lo que falta)", "number"],
+    ["horario", "Horario de soporte"], ["horasResp", "Horas hábiles de respuesta", "number"], ["cambiosMes", "Cambios menores por mes", "number"],
+    ["mesesLimite", "Tope de responsabilidad (meses de mensualidad)", "number"], ["anosConf", "Años de confidencialidad", "number"]]
+};
+
+function renderConForm() {
+  $("#conForm").innerHTML = Object.keys(CON_CAMPOS).map(t => `<div class="card"><h3>${esc(t)}</h3><div class="row">${CON_CAMPOS[t].map(c =>
+    `<label>${esc(c[1])}<input data-k="${c[0]}" type="${c[2] || "text"}" value="${esc(con[c[0]])}"></label>`).join("")}</div></div>`).join("")
+    + `<div class="hint">Los datos del Cliente, el proyecto, los precios y la modalidad de pago salen de la pestaña <b>Cotizar</b>. Lo que falte aparece resaltado en amarillo entre corchetes.</div>`;
+}
+
+function renderContrato() {
+  const r = calc();
+  const m = fmt;
+  const v = (x, ph) => String(x ?? "").trim() ? `<b>${esc(x)}</b>` : `<span class="falta">[${esc(ph)}]</span>`;
+  const n = x => `<b>${esc(x)}</b>`;
+  const hoy = new Date().toLocaleDateString("es-PE", { day: "numeric", month: "long", year: "numeric" });
+  const perm = +cfg.permanencia || 12;
+  const cred = r.cred;
+  const saldoImpl = r.totImpl - r.adel;
+  const S = [];
+  const H = t => S.push(`<h3>${t}</h3>`);
+  const P = t => S.push(`<p>${t}</p>`);
+  const T = t => S.push(`<h2>${t}</h2>`);
+
+  S.push(`<h1>Contrato de servicios tecnológicos y mantenimiento mensual</h1>`);
+  P(`Conste por el presente documento el contrato de prestación de servicios tecnológicos y mantenimiento mensual (el "Contrato") que celebran:`);
+  P(`<b>EL PRESTADOR:</b> ${v(con.pNombre, "NOMBRE COMPLETO")}, identificado con DNI N.º ${v(con.pDni, "DNI")} y RUC N.º ${v(con.pRuc, "RUC")}, con domicilio en ${v(con.pDom, "DOMICILIO Y CIUDAD")}, correo electrónico ${v(con.pCorreo, "CORREO")} y WhatsApp ${v(con.pWsp, "NÚMERO")}.`);
+  P(`<b>EL CLIENTE:</b> ${v(con.cRazon || q.cliente, "RAZÓN SOCIAL")}, con RUC N.º ${v(con.cRuc, "RUC")}, con domicilio en ${v(con.cDom, "DOMICILIO")}, representada por ${v(con.cRep, "REPRESENTANTE")}, identificado con DNI N.º ${v(con.cDni, "DNI")}, con poder inscrito en la Partida Electrónica N.º ${v(con.cPartida, "N.º")}, correo electrónico ${v(con.cCorreo, "CORREO")} y WhatsApp ${v(con.cWsp, "NÚMERO")}.`);
+
+  H("Cláusula 1. Antecedentes y negociación individual");
+  P(`1.1 El Prestador desarrolla y opera plataformas digitales para proyectos inmobiliarios: visor interactivo de lotes con plano, control de leads, cobranza, portal de clientes y registro fotográfico 360° con ubicación GPS.`);
+  P(`1.2 El Cliente desarrolla el proyecto inmobiliario ${v(q.proyecto, "NOMBRE DEL PROYECTO")}, ubicado en ${v(con.ubic, "UBICACIÓN")} (el "Proyecto"), y desea contratar los servicios descritos en el Anexo A.`);
+  P(`1.3 Las partes declaran que este Contrato y sus anexos fueron negociados y acordados individualmente: el Cliente los leyó completos, pudo proponer cambios, los consultó con quien consideró necesario y los acepta conociendo su alcance. No es un contrato de adhesión ni se basa en cláusulas generales de contratación.`);
+
+  H("Cláusula 2. Objeto y licencia de uso");
+  P(`2.1 El Prestador prestará al Cliente los servicios indicados en el Anexo A: (a) la implementación inicial de las plataformas contratadas y (b) el acceso y mantenimiento mensual de las mismas.`);
+  P(`2.2 Las plataformas se brindan como servicio: el Cliente recibe una licencia de uso no exclusiva, intransferible y temporal, vigente mientras el Contrato esté vigente y los pagos estén al día. El Cliente no adquiere la propiedad del sistema ni tiene derecho a recibir el código fuente.`);
+
+  H("Cláusula 3. Precio, forma de pago y comprobantes");
+  if (cred) {
+    P(`3.1 <b>Implementación (credicontado).</b> El precio de la implementación es ${n(m(r.totImpl))}. El Cliente lo pagará así: (a) una cuota inicial de ${n(cfg.credPct + "%")} (${n(m(r.adel))}) antes de iniciar el trabajo; y (b) el saldo de ${n(m(r.totImpl - r.adel))} en ${n(r.credMeses)} cuotas mensuales y consecutivas de ${n(m(r.cuota))} cada una, que vencen el día ${v(con.diaPago, "DÍA")} de cada mes, desde el mes siguiente a la cuota inicial. El fraccionamiento no genera intereses mientras cada cuota se pague puntualmente. Sin la cuota inicial y sin los materiales completos del Anexo B no se inicia el trabajo ni corre plazo alguno.`);
+    P(`3.1-A <b>Cuotas independientes y vencimiento anticipado.</b> Las cuotas de implementación son independientes de la mensualidad: no se reducen ni se suspenden porque el Cliente termine o suspenda la mensualidad. Si el Cliente se atrasa más de ${v(con.diasMora, "DÍAS")} días calendario en el pago de una cuota, o termina el Contrato por su decisión (salvo por el ajuste de precios de la cláusula 3.5 o por incumplimiento del Prestador), el saldo pendiente de la implementación vence de inmediato y es exigible en su totalidad.`);
+  } else {
+    P(`3.1 <b>Implementación (contado).</b> El precio de la implementación es ${n(m(r.totImpl))}. El Cliente pagará el ${n(cfg.adelanto + "%")} (${n(m(r.adel))}) como adelanto antes de iniciar y el saldo de ${n(m(saldoImpl))} cuando se publique la versión para revisión. Sin el adelanto y sin los materiales completos del Anexo B no se inicia el trabajo ni corre plazo alguno.`);
+  }
+  P(`3.2 <b>Mensualidad.</b> El Cliente pagará por adelantado la mensualidad de ${n(m(r.totMens))}, a más tardar el día ${v(con.diaPago, "DÍA")} de cada mes, desde ${v(con.inicioMens, "FECHA DE INICIO")}.`);
+  P(`3.3 <b>Medios de pago.</b> Transferencia bancaria, Yape o Plin a las cuentas que el Prestador comunique por escrito. Un pago se considera recibido cuando se acredita en la cuenta del Prestador.`);
+  P(`3.4 <b>Comprobante.</b> El Prestador emitirá un recibo por honorarios electrónico por cada pago recibido. El monto del recibo es el precio pactado; si la ley obliga al Cliente a retener el impuesto a la renta, la retención se descuenta de ese monto y el Cliente entregará al Prestador la constancia correspondiente dentro del plazo legal.`);
+  P(`3.5 <b>Ajuste de precios.</b> El Prestador podrá ajustar la mensualidad con aviso escrito de 30 días. Si el Cliente no acepta el ajuste, podrá terminar el Contrato dentro de esos 30 días, sin penalidad, pagando hasta la fecha de término.`);
+  P(`3.6 <b>Adelanto.</b> ${cred ? "La cuota inicial" : "El adelanto"} de implementación no es reembolsable, porque retribuye el trabajo iniciado y la reserva de agenda del Prestador, salvo que el Prestador no entregue la implementación por causa que le sea imputable.`);
+
+  H("Cláusula 4. Plazo y permanencia");
+  P(`4.1 <b>Implementación.</b> El plazo estimado es de ${v(con.plazoImpl, "DÍAS")} días hábiles, contados desde que el Prestador recibe ${cred ? "la cuota inicial" : "el adelanto"} y todos los materiales del Anexo B completos y correctos. Los retrasos del Cliente amplían el plazo en igual medida y no generan penalidad alguna contra el Prestador.`);
+  P(`4.2 <b>Mensualidad.</b> Comienza en la fecha indicada en el Anexo A y tiene plazo indeterminado, con una permanencia mínima de ${n(perm)} meses. Cumplida la permanencia, cualquiera de las partes puede terminar el Contrato con aviso escrito de 30 días. El Contrato no se renueva tácitamente: continúa por plazo indeterminado hasta que una parte lo termine.`);
+  P(`4.3 <b>Terminación anticipada por el Cliente.</b> Si el Cliente termina el Contrato antes de cumplir la permanencia, pagará una penalidad equivalente al ${v(con.penalidad, "%")}% de las mensualidades que falten para completarla. Las partes reconocen que esta penalidad compensa la inversión de tiempo y configuración que el Prestador hace al inicio.`);
+  P(`4.4 <b>Terminación por el Prestador.</b> El Prestador puede terminar el Contrato en cualquier momento con aviso escrito de 30 días. Si lo hace durante la permanencia por una causa que no sea incumplimiento del Cliente, no cobrará mensualidades posteriores a la fecha de término.`);
+
+  H("Cláusula 5. Mora, suspensión y cobranza");
+  P(`5.1 Si un pago se retrasa más de ${v(con.diasMora, "DÍAS")} días calendario, el Prestador puede suspender el acceso a las plataformas hasta que el Cliente pague lo adeudado, sin responsabilidad por los perjuicios de la suspensión. Durante la suspensión conserva los datos del Cliente por ${v(con.diasConserva, "DÍAS")} días.`);
+  P(`5.2 Las sumas impagas generan intereses moratorios a la tasa de interés legal efectiva, desde el día siguiente al vencimiento hasta el pago total.`);
+  P(`5.3 Si el retraso supera los ${v(con.diasResol, "DÍAS")} días calendario, el Prestador puede resolver el Contrato de pleno derecho, comunicándolo por escrito, conforme al artículo 1430 del Código Civil. El Cliente deberá pagar lo adeudado${cred ? " (incluido el saldo de las cuotas de implementación)" : ""} y, si estaba dentro de la permanencia, la penalidad de la cláusula 4.3.`);
+  P(`5.4 Los gastos de cobranza extrajudicial y judicial, incluidas costas y costos del proceso, corren por cuenta del Cliente.`);
+
+  H("Cláusula 6. Terminación y sus efectos");
+  P(`6.1 Cualquiera de las partes puede resolver el Contrato por incumplimiento grave de la otra, si la requirió por escrito para que lo corrija y no lo hizo en 10 días calendario.`);
+  P(`6.2 El Prestador puede resolver el Contrato de inmediato, con aviso escrito, si el Cliente usa las plataformas con fines ilícitos o contrarios a la normativa de venta de inmuebles, comparte sus claves con terceros ajenos, intenta copiar, descompilar o revender el sistema, o lo daña.`);
+  P(`6.3 Al terminar el Contrato cesa el acceso a las plataformas. Si el Cliente está al día en sus pagos, el Prestador le entregará, a su solicitud y en 15 días hábiles, una exportación de sus datos en Excel o CSV. El Prestador conservará respaldos por ${v(con.diasConserva, "DÍAS")} días y luego podrá eliminarlos.`);
+  P(`6.4 Subsisten después de terminado el Contrato: las obligaciones de pago pendientes${cred ? " (incluidas las cuotas de implementación)" : ""}, la propiedad intelectual, la confidencialidad y la limitación de responsabilidad.`);
+
+  H("Cláusula 7. Alcance del servicio y soporte");
+  P(`7.1 La mensualidad incluye únicamente lo indicado en el Anexo B. Todo lo demás es adicional.`);
+  P(`7.2 El soporte se brinda por WhatsApp y correo, de lunes a viernes de ${v(con.horario, "HORARIO")}, con un tiempo de respuesta objetivo de ${v(con.horasResp, "HORAS")} horas hábiles. Es un objetivo, no una garantía.`);
+  P(`7.3 Los cambios menores (textos, precios, estados de lotes, usuarios, logos) están incluidos hasta ${v(con.cambiosMes, "N")} solicitudes por mes.`);
+  P(`7.4 Todo trabajo fuera del Anexo B (lotes o etapas nuevas, otro plano, módulos nuevos, rediseños, capacitaciones adicionales) se cotiza aparte y requiere la aprobación escrita del Cliente, que puede darse por correo o WhatsApp, antes de comenzar.`);
+
+  H("Cláusula 8. Obligaciones del Cliente");
+  P(`8.1 Entregar los materiales del Anexo B completos, correctos y a tiempo.`);
+  P(`8.2 Garantizar que la información que entrega o carga (planos, áreas, linderos, precios, estados de lotes, condiciones de venta y publicidad) es veraz y está actualizada, y que tiene derecho a usarla y publicarla. El Cliente es el único responsable de esa información y de la legalidad de su Proyecto, incluida la normativa de protección al consumidor y de venta de inmuebles.`);
+  P(`8.3 Designar un responsable de coordinación. Sus instrucciones por escrito obligan al Cliente.`);
+  P(`8.4 Administrar sus usuarios y claves, no compartirlas y responder por lo que se haga con ellas. Avisar de inmediato si sospecha de un acceso indebido.`);
+  P(`8.5 No copiar, descompilar, revender, sublicenciar ni ceder el uso de las plataformas, ni usarlas para proyectos de terceros.`);
+  P(`8.6 Revisar cada entrega dentro de ${v(con.diasRevision, "DÍAS")} días hábiles. Vencido ese plazo sin observaciones por escrito, la entrega se considera aceptada.`);
+
+  H("Cláusula 9. Propiedad intelectual");
+  P(`9.1 El código, diseño, estructura, plantillas, documentación y mejoras de las plataformas, incluso las hechas a pedido del Cliente, pertenecen al Prestador. Este Contrato no transfiere esos derechos.`);
+  P(`9.2 El Cliente conserva la titularidad de sus datos, planos, logos, fotos y contenidos, y autoriza al Prestador a usarlos para prestar el servicio.`);
+  P(`9.3 Las fotografías 360° tomadas por el Prestador se publican en el visor del Proyecto. El Cliente puede usarlas para promocionar el Proyecto; el Prestador conserva su autoría y los archivos originales.`);
+  P(`9.4 El Prestador puede mencionar el Proyecto y mostrar capturas del visor como referencia comercial, sin datos personales ni información confidencial de compradores, salvo que el Cliente lo prohíba por escrito.`);
+
+  H("Cláusula 10. Datos personales y confidencialidad");
+  P(`10.1 El Cliente es titular y responsable del banco de datos de sus leads, compradores y clientes, conforme a la Ley N.º 29733, Ley de Protección de Datos Personales, y su reglamento. Garantiza que cuenta con el consentimiento y la finalidad legal para cargar esos datos en las plataformas, y que informará a sus titulares sobre su tratamiento.`);
+  P(`10.2 El Prestador actúa como encargado del tratamiento: usa los datos solo para prestar el servicio y bajo instrucciones del Cliente, aplica medidas de seguridad razonables y no los usa para fines propios. Solo los comparte con los proveedores tecnológicos necesarios para operar las plataformas (por ejemplo, alojamiento y hojas de cálculo en la nube).`);
+  P(`10.3 El Prestador avisará al Cliente, en un plazo razonable, de cualquier incidente de seguridad que afecte sus datos.`);
+  P(`10.4 Cada parte mantendrá en reserva la información confidencial de la otra durante el Contrato y ${v(con.anosConf, "N")} años después, y no la usará para otro fin. No es confidencial la información pública ni la que deba revelarse por mandato de autoridad.`);
+
+  H("Cláusula 11. Fotos 360° y trabajo de campo");
+  if (q.foto.on) {
+    P(`11.1 Los viáticos del trabajo de campo (pasajes, movilidad, alojamiento y alimentación) son por cuenta del Cliente, según lo indicado en el Anexo A o en una cotización aprobada.`);
+    P(`11.2 El Cliente garantiza el acceso al terreno en condiciones de seguridad y las autorizaciones necesarias. Si por clima, falta de acceso, seguridad u otra causa ajena al Prestador no se puede trabajar, el día se reprograma sin cobrar de nuevo el servicio, pero los gastos ya incurridos corren por cuenta del Cliente.`);
+    P(`11.3 Los días de trabajo se calculan según las fotos solicitadas y el recorrido indicados en el Anexo A. Si el trabajo real resulta más extenso por cambios pedidos por el Cliente (puntos, accesos o cantidad de fotos), se cobran los días adicionales a la tarifa del Anexo A.`);
+    P(`11.4 La ubicación GPS de las fotos es referencial: su precisión depende del dispositivo y de las condiciones del lugar. Las fotos no constituyen levantamiento topográfico ni sustituyen planos o documentos oficiales.`);
+  } else P(`<i>No aplica: este Contrato no incluye fotos 360°.</i>`);
+
+  H("Cláusula 12. Disponibilidad y limitación de responsabilidad");
+  P(`12.1 Las plataformas dependen de servicios de terceros (como Google, Cloudflare, GitHub y proveedores de mapas). Las interrupciones o cambios de esos terceros no son incumplimiento del Prestador, quien procurará restablecer el servicio con diligencia razonable. No se garantiza disponibilidad ininterrumpida.`);
+  P(`12.2 El plano, las áreas, linderos, estados, precios y cotizaciones que muestran las plataformas son informativos y se basan en la información entregada por el Cliente. No son plano oficial ni título de propiedad. El Cliente debe verificarlos contra sus documentos oficiales antes de cotizar, vender o firmar contratos con sus compradores.`);
+  P(`12.3 El sistema de cobranza es una herramienta de registro: no reemplaza la contabilidad ni la asesoría legal o tributaria. El Cliente es responsable de la exactitud de los contratos, cronogramas, intereses y pagos que registre, y de su relación con sus compradores. El Prestador no es parte de esas ventas.`);
+  P(`12.4 Salvo dolo o culpa inexcusable, la responsabilidad total del Prestador frente al Cliente, por cualquier causa, se limita al monto de las mensualidades efectivamente pagadas en los ${v(con.mesesLimite, "N")} meses anteriores al hecho. El Prestador no responde por lucro cesante, pérdida de ventas o de clientes, daño a la imagen ni otros daños indirectos.`);
+  P(`12.5 Ninguna parte responde por caso fortuito o fuerza mayor.`);
+
+  H("Cláusula 13. Cesión y subcontratación");
+  P(`13.1 El Prestador puede subcontratar parte del servicio y ceder sus derechos de cobro a terceros, avisando al Cliente.`);
+  P(`13.2 El Cliente no puede ceder su posición ni sus derechos en este Contrato sin autorización escrita del Prestador.`);
+
+  H("Cláusula 14. Comunicaciones");
+  P(`14.1 Los avisos operativos y de cobranza son válidos por correo electrónico o WhatsApp, a los datos indicados en la comparecencia. La resolución, la terminación y los cambios de precio se comunican por correo electrónico con confirmación de recepción o por carta.`);
+  P(`14.2 Cada parte debe avisar por escrito cualquier cambio de sus datos. Mientras no lo haga, son válidas las comunicaciones enviadas a los datos anteriores.`);
+
+  H("Cláusula 15. Ley aplicable y solución de controversias");
+  P(`15.1 Este Contrato se rige por las leyes del Perú.`);
+  P(`15.2 Las controversias se tratan primero de forma directa durante 15 días calendario desde que una parte las comunica por escrito.`);
+  P(`15.3 Si no se resuelven, se acudirá a conciliación extrajudicial cuando la ley lo exija y luego a los jueces y tribunales del distrito judicial de ${v(con.ciudad, "CIUDAD DEL PRESTADOR")}, a cuya competencia se someten las partes, renunciando al fuero de sus domicilios.`);
+
+  H("Cláusula 16. Disposiciones finales");
+  P(`16.1 Los anexos forman parte de este Contrato.`);
+  P(`16.2 Toda modificación debe constar por escrito firmado por ambas partes, o por correo electrónico aceptado expresamente por la otra parte.`);
+  P(`16.3 Si alguna cláusula resulta inválida, las demás siguen vigentes.`);
+  P(`16.4 Que una parte no exija un derecho no significa que renuncie a él.`);
+  P(`16.5 El Contrato puede firmarse en copias o con firma digital, y todas tienen el mismo valor.`);
+
+  T("Firmas");
+  P(`Las partes firman en señal de conformidad, en ${v(con.ciudad, "CIUDAD")}, el ${esc(hoy)}.`);
+  S.push(`<table class="firmas"><tr><th>EL PRESTADOR</th><th>EL CLIENTE</th></tr>
+    <tr><td><br><br>Firma: ____________________</td><td><br><br>Firma: ____________________</td></tr>
+    <tr><td>${v(con.pNombre, "NOMBRE COMPLETO")}</td><td>${v(con.cRep, "REPRESENTANTE")}</td></tr>
+    <tr><td>DNI N.º ${v(con.pDni, "DNI")}</td><td>DNI N.º ${v(con.cDni, "DNI")}</td></tr>
+    <tr><td>RUC N.º ${v(con.pRuc, "RUC")}</td><td>${v(con.cRazon || q.cliente, "RAZÓN SOCIAL")}, RUC N.º ${v(con.cRuc, "RUC")}</td></tr></table>`);
+
+  S.push(`<div class="salto"></div>`);
+  T("Anexo A. Servicios, precios y condiciones");
+  const filas = r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${x.impl ? m(x.impl) : "—"}</td><td class="r">${x.mens ? m(x.mens) : "—"}</td></tr>`).join("");
+  const dsc = [];
+  if (r.dPkImpl > 0 || r.dPkMens > 0) dsc.push(`<tr><td>Descuento paquete ${esc(r.pk.n)}</td><td class="r">− ${m(r.dPkImpl)}</td><td class="r">− ${m(r.dPkMens)}</td></tr>`);
+  if (r.dExtra > 0 || r.dMens > 0) dsc.push(`<tr><td>Descuento comercial</td><td class="r">− ${m(r.dExtra)}</td><td class="r">− ${m(r.dMens)}</td></tr>`);
+  if (r.igv > 0) dsc.push(`<tr><td>IGV (${r.igv}%)</td><td class="r">${m(r.iImpl)}</td><td class="r">${m(r.iMens)}</td></tr>`);
+  S.push(`<table class="anexo"><tr><th>Servicio</th><th class="r">Implementación</th><th class="r">Mensualidad</th></tr>${filas}${dsc.join("")}
+    <tr class="tot"><td><b>Total</b></td><td class="r"><b>${m(r.totImpl)}</b></td><td class="r"><b>${m(r.totMens)}</b></td></tr></table>`);
+  P(`<b>Condiciones de este anexo</b>`);
+  const li = [];
+  li.push(`Modalidad de pago de la implementación: <b>${cred ? "credicontado" : "contado"}</b>.`);
+  if (cred) {
+    li.push(`Cuota inicial (${cfg.credPct}%): ${n(m(r.adel))}, antes de iniciar.`);
+    li.push(`Saldo: ${n(r.credMeses)} cuotas mensuales de ${n(m(r.cuota))}, el día ${v(con.diaPago, "DÍA")} de cada mes.`);
+    li.push(`Durante los primeros ${r.credMeses} meses el Cliente paga la cuota más la mensualidad: ${n(m(r.cuota + r.totMens))} al mes.`);
+  } else {
+    li.push(`Adelanto (${cfg.adelanto}%): ${n(m(r.adel))}, antes de iniciar. Saldo de ${n(m(saldoImpl))} al publicarse la versión para revisión.`);
+  }
+  li.push(`Fecha de inicio de la mensualidad: ${v(con.inicioMens, "FECHA")}.`);
+  li.push(`Día de pago de la mensualidad: ${v(con.diaPago, "DÍA")} de cada mes.`);
+  li.push(`Permanencia mínima: ${n(perm)} meses.`);
+  li.push(`Cuentas de pago: las comunicará el Prestador por escrito.`);
+  if (q.notas.trim()) li.push(`Notas: ${esc(q.notas)}`);
+  S.push(`<ul>${li.map(x => `<li>${x}</li>`).join("")}</ul>`);
+
+  T("Anexo B. Alcance de la mensualidad y materiales del Cliente");
+  const lst = t => `<ul>${String(t || "").split("\n").filter(x => x.trim()).map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  P(`<b>La mensualidad incluye</b>`); S.push(lst(cfg.incluye));
+  P(`<b>La mensualidad no incluye (se cotiza aparte)</b>`); S.push(lst(cfg.noincluye));
+  P(`<b>Materiales que entrega el Cliente (según los servicios contratados)</b>`);
+  S.push(lst("Plano del proyecto (KML/KMZ, DWG/DXF, o PDF o imagen) con los lotes numerados.\nHoja de cálculo con lotes, estados y precios.\nLogos y colores de marca.\nDatos de contacto y WhatsApp para mostrar en el visor.\nDocumentación del proyecto y enlaces que deban incluirse.\nNombre y datos del responsable de coordinación."));
+
+  $("#conDoc").innerHTML = S.join("");
+  const faltan = $("#conDoc").querySelectorAll(".falta").length;
+  $("#conAviso").innerHTML = faltan ? `Faltan <b>${faltan}</b> datos (resaltados en amarillo). Complétalos arriba antes de imprimir.` : `Contrato completo. Léelo y, si todo está bien, imprímelo o guárdalo en PDF.`;
+}
 
 /* ============ INICIO ============ */
 autoTier();
