@@ -142,7 +142,7 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 const DEF = {
   marca: "Tu nombre o marca",
   contacto: "WhatsApp: 9XX XXX XXX",
-  ver: 2,
+  ver: 3,
   adelanto: 50,
   permanencia: 12,
   credPct: 50,     /* credicontado: % de la implementación que se paga al inicio */
@@ -178,7 +178,7 @@ const DEF = {
   recargos: [
     { id: "r1", nombre: "Plano sin georreferenciar",            impl: 400, mens: 0 },
     { id: "r2", nombre: "Limpieza de lotes y fondo del plano",  impl: 300, mens: 0 },
-    { id: "r3", nombre: "Cotizador con excepciones",            impl: 250, mens: 0 },
+    { id: "r3", nombre: "Cotizador de lotes: modificaciones / reglas especiales",            impl: 250, mens: 0 },
     { id: "r4", nombre: "Filtro por etapas",                    impl: 250, mens: 0 },
     { id: "r5", nombre: "Resort / áreas comunes en 3D",         impl: 300, mens: 0 }
   ],
@@ -197,7 +197,7 @@ const DEF = {
       { id: "f3", nombre: "360° Completo", ha: 12, fotos: 84, precio: 2500, mens: 80 }
     ] },
   incluye: "Hosting y publicación\nRespaldos\nSoporte por WhatsApp\nCambios menores (textos, precios, estados, usuarios)\nCorrección de fallos",
-  noincluye: "Lotes o etapas nuevas\nOtro plano\nMódulos nuevos\nCapacitaciones adicionales"
+  noincluye: "Lotes o etapas nuevas\nOtro plano\nMódulos nuevos\nCapacitaciones adicionales\nCambios o reglas especiales en el cotizador de lotes"
 };
 
 /* ============ ESTADO ============ */
@@ -217,7 +217,8 @@ function merge(s) {
   const c = Object.assign(clone(DEF), s);
   c.foto = Object.assign(clone(DEF.foto), s.foto || {});
   if (!s.ver || s.ver < 2) { c.permanencia = 12; }  /* migración: permanencia mínima ahora es 12 meses */
-  c.ver = 2;
+  if (!s.ver || s.ver < 3) { if (!/cotizador/i.test(c.noincluye || "")) c.noincluye = (c.noincluye || "") + "\nCambios o reglas especiales en el cotizador de lotes"; }
+  c.ver = 3;
   return c;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
@@ -228,7 +229,7 @@ let q = {
   serv: { plano: true, leads: true, cobranza: true, portal: false },
   leadsTramo: 1, rec: {}, custom: [],
   foto: { on: false, modo: "medida", nivel: "n1", fotos: 0, ha: 3, dias: 0, pasajes: 0, aloj: false, noches: 0, comida: true },
-  modalidad: "contado", descExtra: 0, descTipo: "%", descMens: 0, descMensTipo: "%", usd: false, aplicaPaquete: true, notas: ""
+  modalidad: "contado", mesesGratis: 0, descExtra: 0, descTipo: "%", descMens: 0, descMensTipo: "%", usd: false, aplicaPaquete: true, notas: ""
 };
 
 const fmt = n => {
@@ -250,7 +251,7 @@ function precioPlano(n) {
 function calc() {
   const L = [];
   const t = cfg.plano.find(x => x.id === q.tier) || cfg.plano[0];
-  if (q.serv.plano) L.push({ c: `Plano interactivo (${+q.lotes || 0} lotes)`, impl: precioPlano(q.lotes).total, mens: t.mens, base: true });
+  if (q.serv.plano) L.push({ c: `Plano interactivo (${+q.lotes || 0} lotes) · incluye cotizador de lotes estándar`, impl: precioPlano(q.lotes).total, mens: t.mens, base: true });
   if (q.serv.leads) {
     const tr = cfg.leads.tramos[q.leadsTramo] || cfg.leads.tramos[0];
     L.push({ c: "Control de leads (" + tr.nombre + ")", impl: cfg.leads.impl, mens: tr.mens, base: true });
@@ -320,7 +321,9 @@ function calc() {
   const credMeses = Math.max(1, Math.round(+cfg.credMeses || 12));
   const adel = totImpl * (cred ? (+cfg.credPct || 0) : (+cfg.adelanto || 0)) / 100;
   const cuota = cred ? (totImpl - adel) / credMeses : 0;
-  return { L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv, cred, credMeses, cuota };
+  const gratis = Math.max(0, Math.round(+q.mesesGratis || 0));
+  const valorGratis = gratis * totMens;
+  return { gratis, valorGratis, L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv, cred, credMeses, cuota };
 }
 
 /* ============ COTIZACIÓN (vista previa e impresión) ============ */
@@ -331,8 +334,8 @@ function renderQuote() {
     : `<tr><td colspan="3"><small>Elige al menos un servicio.</small></td></tr>`;
   const ahorroImpl = r.dPkImpl + r.dExtra;
   const ahorroMens = r.dPkMens + r.dMens;
-  const ahorroTxt = (ahorroImpl > 0 || ahorroMens > 0)
-    ? `<div class="ahorro">Ahorro para el cliente: <b>${fmt(ahorroImpl)}</b> en la implementación${ahorroMens > 0 ? ` y <b>${fmt(ahorroMens)}</b> al mes` : ""}.</div>` : "";
+  const ahorroTxt = (ahorroImpl > 0 || ahorroMens > 0 || r.gratis > 0)
+    ? `<div class="ahorro">Ahorro para el cliente: ${ahorroImpl > 0 ? `<b>${fmt(ahorroImpl)}</b> en la implementación` : ""}${ahorroMens > 0 ? `${ahorroImpl > 0 ? " y " : ""}<b>${fmt(ahorroMens)}</b> al mes` : ""}${r.gratis > 0 ? `${ahorroImpl > 0 || ahorroMens > 0 ? ". Además, " : ""}<b>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"} de mantenimiento gratis</b> (valor ${fmt(r.valorGratis)})` : ""}.</div>` : "";
   const li = t => String(t || "").split("\n").filter(x => x.trim()).map(x => `<li>${esc(x)}</li>`).join("");
   $("#cot").innerHTML = `
     <div class="top">
@@ -363,9 +366,10 @@ function renderQuote() {
         ${r.dPkMens > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.mens}%)</span><span>− ${fmt(r.dPkMens)}</span></div>` : ""}
         ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial${q.descMensTipo === "S/" ? "" : " (" + q.descMens + "%)"}</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iMens)}</span></div>` : ""}
-        <div class="big"><span>TOTAL / MES</span><span>${fmt(r.totMens)}</span></div>
-        <div><small>Permanencia mínima: ${cfg.permanencia} meses</small></div>
-        ${r.cred ? `<div><small>Durante los primeros ${r.credMeses} meses pagas la cuota + la mensualidad: <b>${fmt(r.cuota + r.totMens)}</b> al mes.</small></div>` : ""}
+        <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${fmt(r.totMens)}</span></div>
+        ${r.gratis > 0 ? `<div class="neg"><span>Mantenimiento GRATIS</span><span>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"}</span></div>` : ""}
+        <div><small>Permanencia mínima: ${cfg.permanencia} meses${r.gratis > 0 ? " pagados, contados desde que termina el mantenimiento gratis" : ""}</small></div>
+        ${r.cred && !r.gratis ? `<div><small>Durante los primeros ${r.credMeses} meses pagas la cuota + la mensualidad: <b>${fmt(r.cuota + r.totMens)}</b> al mes.</small></div>` : ""}
       </div>
     </div>
     ${ahorroTxt}
@@ -374,7 +378,7 @@ function renderQuote() {
       <b>No incluye (se cotiza aparte):</b><ul>${li(cfg.noincluye)}</ul>
       ${q.notas.trim() ? `<b>Notas:</b><br>${esc(q.notas).replace(/\n/g, "<br>")}` : ""}
     </div>`;
-  $("#mini").innerHTML = `<span>Implementación: <b>${fmt(r.totImpl)}</b></span><span>Mensual: <b>${fmt(r.totMens)}</b></span>`;
+  $("#mini").innerHTML = `<span>Implementación: <b>${fmt(r.totImpl)}</b></span><span>Mensual: <b>${r.gratis > 0 ? "Gratis " + r.gratis + " m · luego " : ""}${fmt(r.totMens)}</b></span>`;
 }
 
 /* ============ FORMULARIO DE COTIZAR ============ */
@@ -433,6 +437,8 @@ function renderForm() {
         <label>Descuento en mensualidad<input type="number" min="0" data-q="descMens" data-num="1" value="${q.descMens}"></label>
         <label>Tipo de descuento mensual<select data-q="descMensTipo"><option value="%" ${q.descMensTipo === "%" ? "selected" : ""}>Porcentaje (%)</option><option value="S/" ${q.descMensTipo === "S/" ? "selected" : ""}>Monto (S/)</option></select></label>
       </div>
+      <label style="margin-top:8px">Mantenimiento GRATIS (meses, 0 si no aplica)<input type="number" min="0" data-q="mesesGratis" data-num="1" value="${q.mesesGratis}"></label>
+      <div class="hint">Úsalo para compensar a clientes grandes (ej. 12 = un año gratis). La mensualidad y la permanencia empiezan a contar al terminar ese período.</div>
       <label style="margin-top:8px">Modalidad de pago de la implementación<select data-q="modalidad"><option value="contado" ${q.modalidad === "contado" ? "selected" : ""}>Contado (${cfg.adelanto}% y saldo al entregar)</option><option value="credicontado" ${q.modalidad === "credicontado" ? "selected" : ""}>Credicontado (${cfg.credPct}% + ${cfg.credMeses} cuotas)</option></select></label>
       <label class="chk" style="margin-top:8px"><input type="checkbox" data-q="aplicaPaquete" ${q.aplicaPaquete ? "checked" : ""}>Aplicar descuento de paquete</label>
       <label class="chk"><input type="checkbox" data-q="usd" ${q.usd ? "checked" : ""}>Mostrar en dólares (T.C. ${cfg.tc})</label>
@@ -594,6 +600,7 @@ function textoWA() {
   if (r.dExtra > 0) s += `\nDescuento comercial: -${fmt(r.dExtra)}`;
   s += `\n*Implementación: ${fmt(r.totImpl)}*` + (r.cred ? ` (credicontado: inicial ${cfg.credPct}% = ${fmt(r.adel)} + ${r.credMeses} cuotas de ${fmt(r.cuota)})` : ` (contado: adelanto ${cfg.adelanto}%: ${fmt(r.adel)})`);
   s += `\n*Mensualidad: ${fmt(r.totMens)}* (mínimo ${cfg.permanencia} meses)`;
+  if (r.gratis > 0) s += `\n*Mantenimiento GRATIS los primeros ${r.gratis} meses* (valor ${fmt(r.valorGratis)}); la mensualidad se paga desde el mes ${r.gratis + 1}.`;
   s += `\n\nVálida por ${cfg.validez} días.\n${cfg.marca} · ${cfg.contacto}`;
   return s;
 }
@@ -717,7 +724,8 @@ function renderContrato() {
   } else {
     P(`3.1 <b>Implementación (contado).</b> El precio de la implementación es ${n(m(r.totImpl))}. El Cliente pagará el ${n(cfg.adelanto + "%")} (${n(m(r.adel))}) como adelanto antes de iniciar y el saldo de ${n(m(saldoImpl))} cuando se publique la versión para revisión. Sin el adelanto y sin los materiales completos del Anexo B no se inicia el trabajo ni corre plazo alguno.`);
   }
-  P(`3.2 <b>Mensualidad.</b> El Cliente pagará por adelantado la mensualidad de ${n(m(r.totMens))}, a más tardar el día ${v(con.diaPago, "DÍA")} de cada mes, desde ${v(con.inicioMens, "FECHA DE INICIO")}.`);
+  if (r.gratis > 0) P(`3.2 <b>Mensualidad y mantenimiento gratuito.</b> Como beneficio comercial, el Prestador brinda el mantenimiento y acceso a las plataformas sin costo durante los primeros ${n(r.gratis)} meses desde ${v(con.inicioMens, "FECHA DE INICIO")} (valor referencial ${n(m(r.valorGratis))}). Desde el mes ${n(r.gratis + 1)} el Cliente pagará por adelantado la mensualidad de ${n(m(r.totMens))}, a más tardar el día ${v(con.diaPago, "DÍA")} de cada mes. El beneficio está condicionado a que el Cliente esté al día en sus pagos de implementación y a que no termine el Contrato por su decisión; si incumple esas condiciones, el Prestador puede suspender el servicio conforme a la cláusula 5. El beneficio es personal, no se acumula ni se canjea por dinero.`);
+  else P(`3.2 <b>Mensualidad.</b> El Cliente pagará por adelantado la mensualidad de ${n(m(r.totMens))}, a más tardar el día ${v(con.diaPago, "DÍA")} de cada mes, desde ${v(con.inicioMens, "FECHA DE INICIO")}.`);
   P(`3.3 <b>Medios de pago.</b> Transferencia bancaria, Yape o Plin a las cuentas que el Prestador comunique por escrito. Un pago se considera recibido cuando se acredita en la cuenta del Prestador.`);
   P(`3.4 <b>Comprobante.</b> El Prestador emitirá un recibo por honorarios electrónico por cada pago recibido. El monto del recibo es el precio pactado; si la ley obliga al Cliente a retener el impuesto a la renta, la retención se descuenta de ese monto y el Cliente entregará al Prestador la constancia correspondiente dentro del plazo legal.`);
   P(`3.5 <b>Ajuste de precios.</b> El Prestador podrá ajustar la mensualidad con aviso escrito de 30 días. Si el Cliente no acepta el ajuste, podrá terminar el Contrato dentro de esos 30 días, sin penalidad, pagando hasta la fecha de término.`);
@@ -725,7 +733,7 @@ function renderContrato() {
 
   H("Cláusula 4. Plazo y permanencia");
   P(`4.1 <b>Implementación.</b> El plazo estimado es de ${v(con.plazoImpl, "DÍAS")} días hábiles, contados desde que el Prestador recibe ${cred ? "la cuota inicial" : "el adelanto"} y todos los materiales del Anexo B completos y correctos. Los retrasos del Cliente amplían el plazo en igual medida y no generan penalidad alguna contra el Prestador.`);
-  P(`4.2 <b>Mensualidad.</b> Comienza en la fecha indicada en el Anexo A y tiene plazo indeterminado, con una permanencia mínima de ${n(perm)} meses. Cumplida la permanencia, cualquiera de las partes puede terminar el Contrato con aviso escrito de 30 días. El Contrato no se renueva tácitamente: continúa por plazo indeterminado hasta que una parte lo termine.`);
+  P(`4.2 <b>Mensualidad.</b> Comienza en la fecha indicada en el Anexo A y tiene plazo indeterminado, con una permanencia mínima de ${n(perm)} meses${r.gratis > 0 ? ` de mensualidad pagada, contados desde que termina el período de mantenimiento gratuito (compromiso total: ${n(r.gratis + perm)} meses desde el inicio)` : ""}. Cumplida la permanencia, cualquiera de las partes puede terminar el Contrato con aviso escrito de 30 días. El Contrato no se renueva tácitamente: continúa por plazo indeterminado hasta que una parte lo termine.`);
   P(`4.3 <b>Terminación anticipada por el Cliente.</b> Si el Cliente termina el Contrato antes de cumplir la permanencia, pagará una penalidad equivalente al ${v(con.penalidad, "%")}% de las mensualidades que falten para completarla. Las partes reconocen que esta penalidad compensa la inversión de tiempo y configuración que el Prestador hace al inicio.`);
   P(`4.4 <b>Terminación por el Prestador.</b> El Prestador puede terminar el Contrato en cualquier momento con aviso escrito de 30 días. Si lo hace durante la permanencia por una causa que no sea incumplimiento del Cliente, no cobrará mensualidades posteriores a la fecha de término.`);
 
@@ -745,7 +753,7 @@ function renderContrato() {
   P(`7.1 La mensualidad incluye únicamente lo indicado en el Anexo B. Todo lo demás es adicional.`);
   P(`7.2 El soporte se brinda por WhatsApp y correo, de lunes a viernes de ${v(con.horario, "HORARIO")}, con un tiempo de respuesta objetivo de ${v(con.horasResp, "HORAS")} horas hábiles. Es un objetivo, no una garantía.`);
   P(`7.3 Los cambios menores (textos, precios, estados de lotes, usuarios, logos) están incluidos hasta ${v(con.cambiosMes, "N")} solicitudes por mes.`);
-  P(`7.4 Todo trabajo fuera del Anexo B (lotes o etapas nuevas, otro plano, módulos nuevos, rediseños, capacitaciones adicionales) se cotiza aparte y requiere la aprobación escrita del Cliente, que puede darse por correo o WhatsApp, antes de comenzar.`);
+  P(`7.4 Todo trabajo fuera del Anexo B (lotes o etapas nuevas, otro plano, módulos nuevos, cambios o reglas especiales en el cotizador de lotes, rediseños, capacitaciones adicionales) se cotiza aparte y requiere la aprobación escrita del Cliente, que puede darse por correo o WhatsApp, antes de comenzar.`);
 
   H("Cláusula 8. Obligaciones del Cliente");
   P(`8.1 Entregar los materiales del Anexo B completos, correctos y a tiempo.`);
@@ -825,13 +833,14 @@ function renderContrato() {
   if (cred) {
     li.push(`Cuota inicial (${cfg.credPct}%): ${n(m(r.adel))}, antes de iniciar.`);
     li.push(`Saldo: ${n(r.credMeses)} cuotas mensuales de ${n(m(r.cuota))}, el día ${v(con.diaPago, "DÍA")} de cada mes.`);
-    li.push(`Durante los primeros ${r.credMeses} meses el Cliente paga la cuota más la mensualidad: ${n(m(r.cuota + r.totMens))} al mes.`);
+    if (!r.gratis) li.push(`Durante los primeros ${r.credMeses} meses el Cliente paga la cuota más la mensualidad: ${n(m(r.cuota + r.totMens))} al mes.`);
   } else {
     li.push(`Adelanto (${cfg.adelanto}%): ${n(m(r.adel))}, antes de iniciar. Saldo de ${n(m(saldoImpl))} al publicarse la versión para revisión.`);
   }
+  if (r.gratis > 0) li.push(`Mantenimiento gratis: <b>${r.gratis} meses</b> desde ${v(con.inicioMens, "FECHA")} (valor ${n(m(r.valorGratis))}). La mensualidad de ${n(m(r.totMens))} se cobra desde el mes ${r.gratis + 1}.`);
   li.push(`Fecha de inicio de la mensualidad: ${v(con.inicioMens, "FECHA")}.`);
   li.push(`Día de pago de la mensualidad: ${v(con.diaPago, "DÍA")} de cada mes.`);
-  li.push(`Permanencia mínima: ${n(perm)} meses.`);
+  li.push(`Permanencia mínima: ${n(perm)} meses${r.gratis > 0 ? " de mensualidad pagada, desde que termina el mantenimiento gratis" : ""}.`);
   li.push(`Cuentas de pago: las comunicará el Prestador por escrito.`);
   if (q.notas.trim()) li.push(`Notas: ${esc(q.notas)}`);
   S.push(`<ul>${li.map(x => `<li>${x}</li>`).join("")}</ul>`);
