@@ -142,7 +142,7 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 const DEF = {
   marca: "Tu nombre o marca",
   contacto: "WhatsApp: 9XX XXX XXX",
-  ver: 3,
+  ver: 4,
   adelanto: 50,
   permanencia: 12,
   credPct: 50,     /* credicontado: % de la implementación que se paga al inicio */
@@ -150,23 +150,16 @@ const DEF = {
   validez: 15,
   tc: 4,
   igv: 0,
-  /* Implementación del plano según N° de lotes = PARTE PLANO + PARTE VISUAL.
-     fijo:1 → precio fijo ese tramo; fijo:0 → precio × N° de lotes. Más lotes que el último tramo: se usa el último. */
-  planoLotes: [
-    { max: 200,  fijo: 1, plano: 350,  visual: 450  },
-    { max: 400,  fijo: 0, plano: 1.6,  visual: 2.1  },
-    { max: 600,  fijo: 0, plano: 1.45, visual: 1.95 },
-    { max: 900,  fijo: 0, plano: 1.3,  visual: 1.82 },
-    { max: 1200, fijo: 0, plano: 1.15, visual: 1.72 },
-    { max: 1600, fijo: 0, plano: 1.0,  visual: 1.62 },
-    { max: 99999, fijo: 0, plano: 0.85, visual: 1.53 }  /* 1601 lotes en adelante */
-  ],
-  /* Solo la MENSUALIDAD del plano depende de este tamaño (la implementación sale de planoLotes) */
-  plano: [
-    { id: "peq", nombre: "Pequeño", max: 150,   impl: 650,  mens: 80  },
-    { id: "med", nombre: "Mediano", max: 600,   impl: 1300, mens: 100 },
-    { id: "gra", nombre: "Grande",  max: 99999, impl: 2600, mens: 120 }
-  ],
+  /* PLANO INTERACTIVO (sin fotos 360°) — fórmula por N° de lotes:
+     Implementación = base + Σ (tasa × lotes que caen dentro de cada tramo)
+       400 + 0.8×(lotes entre 200 y 500) + 0.6×(entre 500 y 1000) + 0.55×(más de 1000)
+     Mensualidad = mensBase + mensTasa × (lotes por encima de mensDesde) */
+  planoForm: {
+    base: 400,
+    tramos: [ { desde: 200, tasa: 0.8 }, { desde: 500, tasa: 0.6 }, { desde: 1000, tasa: 0.55 } ],
+    mensBase: 40, mensDesde: 200, mensTasa: 0.02
+  },
+
   leads: { impl: 700, tramos: [
     { nombre: "Hasta 20 asesores", mens: 100 },
     { nombre: "De 21 a 100 asesores", mens: 150 },
@@ -218,14 +211,14 @@ function merge(s) {
   c.foto = Object.assign(clone(DEF.foto), s.foto || {});
   if (!s.ver || s.ver < 2) { c.permanencia = 12; }  /* migración: permanencia mínima ahora es 12 meses */
   if (!s.ver || s.ver < 3) { if (!/cotizador/i.test(c.noincluye || "")) c.noincluye = (c.noincluye || "") + "\nCambios o reglas especiales en el cotizador de lotes"; }
-  c.ver = 3;
+  c.ver = 4;
   return c;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
 
 let cfg = load();
 let q = {
-  cliente: "", proyecto: "", lotes: 300, tier: "med",
+  cliente: "", proyecto: "", lotes: 300, ov: {}, finalImpl: "", finalMens: "",
   serv: { plano: true, leads: true, cobranza: true, portal: false },
   leadsTramo: 1, rec: {}, custom: [],
   foto: { on: false, modo: "medida", nivel: "n1", fotos: 0, ha: 3, dias: 0, pasajes: 0, aloj: false, noches: 0, comida: true },
@@ -240,18 +233,21 @@ const fmt = n => {
 /* ============ CÁLCULO ============ */
 function precioPlano(n) {
   n = +n || 0;
-  const rows = [...(cfg.planoLotes || [])].sort((a, b) => a.max - b.max);
-  if (n <= 0 || !rows.length) return { total: 0, plano: 0, visual: 0, fila: null };
-  const bruto = (r, x) => { const m = r.fijo ? 1 : x; return Math.round(m * r.plano) + Math.round(m * r.visual); };
-  const r = rows.find(x => n <= x.max) || rows[rows.length - 1];
-  const total = bruto(r, n);
-  return { total, fila: r };
+  const F = cfg.planoForm;
+  if (n <= 0 || !F) return { impl: 0, mens: 0 };
+  const tr = [...F.tramos].sort((x, y) => x.desde - y.desde);
+  let impl = +F.base || 0;
+  tr.forEach((t, i) => {
+    const tope = i + 1 < tr.length ? tr[i + 1].desde : Infinity;
+    impl += (+t.tasa || 0) * Math.max(0, Math.min(n, tope) - t.desde);
+  });
+  const mens = (+F.mensBase || 0) + (+F.mensTasa || 0) * Math.max(0, n - (+F.mensDesde || 0));
+  return { impl: Math.round(impl), mens: Math.round(mens) };
 }
 
 function calc() {
   const L = [];
-  const t = cfg.plano.find(x => x.id === q.tier) || cfg.plano[0];
-  if (q.serv.plano) L.push({ c: `Plano interactivo (${+q.lotes || 0} lotes) · incluye cotizador de lotes estándar`, impl: precioPlano(q.lotes).total, mens: t.mens, base: true });
+  if (q.serv.plano) { const pp = precioPlano(q.lotes); L.push({ c: `Plano interactivo (${+q.lotes || 0} lotes) · incluye cotizador de lotes estándar`, impl: pp.impl, mens: pp.mens, base: true }); }
   if (q.serv.leads) {
     const tr = cfg.leads.tramos[q.leadsTramo] || cfg.leads.tramos[0];
     L.push({ c: "Control de leads (" + tr.nombre + ")", impl: cfg.leads.impl, mens: tr.mens, base: true });
@@ -297,6 +293,15 @@ function calc() {
     if ((x.c || "").trim() || +x.impl || +x.mens) L.push({ c: x.c || "Otro concepto", impl: +x.impl || 0, mens: +x.mens || 0 });
   });
 
+  /* Ajustes manuales de salida por línea */
+  L.forEach(x => {
+    x.i0 = x.impl; x.m0 = x.mens;
+    const o = q.ov[x.c];
+    if (o) {
+      if (o.impl !== "" && o.impl != null && !isNaN(+o.impl)) x.impl = +o.impl;
+      if (o.mens !== "" && o.mens != null && !isNaN(+o.mens)) x.mens = +o.mens;
+    }
+  });
   const baseImpl = L.filter(x => x.base).reduce((a, x) => a + x.impl, 0);
   const baseMens = L.filter(x => x.base).reduce((a, x) => a + x.mens, 0);
   let pk = null;
@@ -316,14 +321,18 @@ function calc() {
   const netMens = subMens - dPkMens - dMens;
   const igv = +cfg.igv || 0;
   const iImpl = netImpl * igv / 100, iMens = netMens * igv / 100;
-  const totImpl = netImpl + iImpl, totMens = netMens + iMens;
+  let totImpl = netImpl + iImpl, totMens = netMens + iMens;
+  /* Precio final manual (opcional): se muestra como "Ajuste comercial" para que las cifras cuadren */
+  let ajImpl = 0, ajMens = 0;
+  if (q.finalImpl !== "" && q.finalImpl != null && !isNaN(+q.finalImpl)) { ajImpl = +q.finalImpl - totImpl; totImpl = +q.finalImpl; }
+  if (q.finalMens !== "" && q.finalMens != null && !isNaN(+q.finalMens)) { ajMens = +q.finalMens - totMens; totMens = +q.finalMens; }
   const cred = q.modalidad === "credicontado";
   const credMeses = Math.max(1, Math.round(+cfg.credMeses || 12));
   const adel = totImpl * (cred ? (+cfg.credPct || 0) : (+cfg.adelanto || 0)) / 100;
   const cuota = cred ? (totImpl - adel) / credMeses : 0;
   const gratis = Math.max(0, Math.round(+q.mesesGratis || 0));
   const valorGratis = gratis * totMens;
-  return { gratis, valorGratis, L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv, cred, credMeses, cuota };
+  return { ajImpl, ajMens, gratis, valorGratis, L, pk, subImpl, subMens, dPkImpl, dPkMens, dExtra, dMens, iImpl, iMens, totImpl, totMens, adel, igv, cred, credMeses, cuota };
 }
 
 /* ============ COTIZACIÓN (vista previa e impresión) ============ */
@@ -332,8 +341,8 @@ function renderQuote() {
   const hoy = new Date().toLocaleDateString("es-PE");
   const filas = r.L.length ? r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${x.impl ? fmt(x.impl) : "—"}</td><td class="r">${x.mens ? fmt(x.mens) : "—"}</td></tr>`).join("")
     : `<tr><td colspan="3"><small>Elige al menos un servicio.</small></td></tr>`;
-  const ahorroImpl = r.dPkImpl + r.dExtra;
-  const ahorroMens = r.dPkMens + r.dMens;
+  const ahorroImpl = r.dPkImpl + r.dExtra + Math.max(0, -r.ajImpl);
+  const ahorroMens = r.dPkMens + r.dMens + Math.max(0, -r.ajMens);
   const ahorroTxt = (ahorroImpl > 0 || ahorroMens > 0 || r.gratis > 0)
     ? `<div class="ahorro">Ahorro para el cliente: ${ahorroImpl > 0 ? `<b>${fmt(ahorroImpl)}</b> en la implementación` : ""}${ahorroMens > 0 ? `${ahorroImpl > 0 ? " y " : ""}<b>${fmt(ahorroMens)}</b> al mes` : ""}${r.gratis > 0 ? `${ahorroImpl > 0 || ahorroMens > 0 ? ". Además, " : ""}<b>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"} de mantenimiento gratis</b> (valor ${fmt(r.valorGratis)})` : ""}.</div>` : "";
   const li = t => String(t || "").split("\n").filter(x => x.trim()).map(x => `<li>${esc(x)}</li>`).join("");
@@ -353,6 +362,7 @@ function renderQuote() {
         ${r.dPkImpl > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.impl}%)</span><span>− ${fmt(r.dPkImpl)}</span></div>` : ""}
         ${r.dExtra > 0 ? `<div class="neg"><span>Descuento comercial${q.descTipo === "%" ? " (" + q.descExtra + "%)" : ""}</span><span>− ${fmt(r.dExtra)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iImpl)}</span></div>` : ""}
+        ${Math.abs(r.ajImpl) >= 0.5 ? `<div class="${r.ajImpl < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajImpl < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajImpl))}</span></div>` : ""}
         <div class="big"><span>TOTAL</span><span>${fmt(r.totImpl)}</span></div>
         ${r.cred ? `<div><span>Modalidad</span><span>Credicontado</span></div>
         <div><span>Inicial (${cfg.credPct}%)</span><span>${fmt(r.adel)}</span></div>
@@ -366,6 +376,7 @@ function renderQuote() {
         ${r.dPkMens > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.mens}%)</span><span>− ${fmt(r.dPkMens)}</span></div>` : ""}
         ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial${q.descMensTipo === "S/" ? "" : " (" + q.descMens + "%)"}</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iMens)}</span></div>` : ""}
+        ${Math.abs(r.ajMens) >= 0.5 ? `<div class="${r.ajMens < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajMens < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajMens))}</span></div>` : ""}
         <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${fmt(r.totMens)}</span></div>
         ${r.gratis > 0 ? `<div class="neg"><span>Mantenimiento GRATIS</span><span>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"}</span></div>` : ""}
         <div><small>Permanencia mínima: ${cfg.permanencia} meses${r.gratis > 0 ? " pagados, contados desde que termina el mantenimiento gratis" : ""}</small></div>
@@ -378,12 +389,12 @@ function renderQuote() {
       <b>No incluye (se cotiza aparte):</b><ul>${li(cfg.noincluye)}</ul>
       ${q.notas.trim() ? `<b>Notas:</b><br>${esc(q.notas).replace(/\n/g, "<br>")}` : ""}
     </div>`;
+  renderOv(false);
   $("#mini").innerHTML = `<span>Implementación: <b>${fmt(r.totImpl)}</b></span><span>Mensual: <b>${r.gratis > 0 ? "Gratis " + r.gratis + " m · luego " : ""}${fmt(r.totMens)}</b></span>`;
 }
 
 /* ============ FORMULARIO DE COTIZAR ============ */
 function renderForm() {
-  const tiers = cfg.plano.map(t => `<option value="${esc(t.id)}" ${q.tier === t.id ? "selected" : ""}>${esc(t.nombre)} (hasta ${t.max >= 99999 ? "más" : t.max} lotes)</option>`).join("");
   const tramos = cfg.leads.tramos.map((t, i) => `<option value="${i}" ${q.leadsTramo === i ? "selected" : ""}>${esc(t.nombre)}</option>`).join("");
   const recs = cfg.recargos.map(r => {
     const s = q.rec[r.id] || { on: false, qty: 1 };
@@ -399,7 +410,6 @@ function renderForm() {
         <label>Cliente / empresa<input data-q="cliente" value="${esc(q.cliente)}"></label>
         <label>Proyecto<input data-q="proyecto" value="${esc(q.proyecto)}"></label>
         <label>N° de lotes<input type="number" data-q="lotes" data-num="1" value="${q.lotes}"></label>
-        <label>Tamaño (define la mensualidad)<select data-q="tier">${tiers}</select></label>
       </div>
     </div>
     <div class="card"><h3>2 · Servicios</h3>
@@ -443,8 +453,38 @@ function renderForm() {
       <label class="chk" style="margin-top:8px"><input type="checkbox" data-q="aplicaPaquete" ${q.aplicaPaquete ? "checked" : ""}>Aplicar descuento de paquete</label>
       <label class="chk"><input type="checkbox" data-q="usd" ${q.usd ? "checked" : ""}>Mostrar en dólares (T.C. ${cfg.tc})</label>
       <label style="margin-top:8px">Notas para el cliente<textarea data-q="notas">${esc(q.notas)}</textarea></label>
+    </div>
+    <div class="card"><h3>6 · Ajustar lo que sale en la propuesta</h3>
+      <small>Cambia cualquier monto antes de enviarla. Lo que dejes vacío se calcula solo.</small>
+      <div id="ovBox" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:8px">
+        <label>Precio FINAL de implementación (S/)<input type="number" data-q="finalImpl" placeholder="vacío = calculado" value="${esc(q.finalImpl)}"></label>
+        <label>Mensualidad FINAL (S/)<input type="number" data-q="finalMens" placeholder="vacío = calculado" value="${esc(q.finalMens)}"></label>
+      </div>
+      <div class="hint">Si pones un precio final, la propuesta muestra la diferencia como "Ajuste comercial" para que las cifras cuadren.</div>
+      <div class="bar" style="margin:10px 0 0">
+        <button class="b" data-act="png">Descargar imagen (PNG)</button>
+        <button class="b sec" data-act="edtxt">✏️ Editar textos de la propuesta</button>
+        <button class="b del" data-act="clrov">Quitar ajustes</button>
+      </div>
+      <small id="edAviso"></small>
     </div>`;
-  renderCust();
+  renderCust(); renderOv(true);
+}
+/* Ajustes manuales por línea: se vuelve a dibujar solo si cambian los conceptos, para no perder el cursor al escribir */
+let ovSig = "";
+function renderOv(force) {
+  const box = document.getElementById("ovBox"); if (!box) return;
+  const r = calc();
+  const sig = r.L.map(x => x.c).join("|");
+  if (!force && sig === ovSig) return;
+  ovSig = sig;
+  box.innerHTML = r.L.length ? `<div class="cu" style="grid-template-columns:2fr 1fr 1fr"><small>Concepto</small><small>Implementación</small><small>Mensual</small></div>` + r.L.map(x => {
+    const o = q.ov[x.c] || {};
+    return `<div class="cu" style="grid-template-columns:2fr 1fr 1fr"><small>${esc(x.c)}</small>
+      <input type="number" data-ov="${esc(x.c)}" data-ok="impl" placeholder="${Math.round(x.i0)}" value="${o.impl === undefined ? "" : esc(o.impl)}">
+      <input type="number" data-ov="${esc(x.c)}" data-ok="mens" placeholder="${Math.round(x.m0)}" value="${o.mens === undefined ? "" : esc(o.mens)}"></div>`;
+  }).join("") : "<small>Elige al menos un servicio.</small>";
 }
 function renderCust() {
   $("#cust").innerHTML = q.custom.map((x, i) => `
@@ -455,14 +495,6 @@ function renderCust() {
       <button class="b del" data-act="delcu" data-i="${i}">✕</button>
     </div>`).join("");
 }
-function autoTier() {
-  const s = [...cfg.plano].sort((a, b) => a.max - b.max);
-  const t = s.find(x => q.lotes <= x.max) || s[s.length - 1];
-  q.tier = t.id;
-  const el = document.querySelector("[data-q=tier]");
-  if (el) el.value = t.id;
-}
-
 /* ============ PANTALLA DE PRECIOS ============ */
 const getP = p => p.split(".").reduce((o, k) => o[k], cfg);
 function setP(p, v) {
@@ -474,6 +506,10 @@ function setP(p, v) {
 const f = (label, p, type = "number") => `<label>${label}<input data-p="${p}" type="${type}" step="any" value="${esc(getP(p))}"></label>`;
 const cell = (p, type = "number", ph = "") => `<input data-p="${p}" type="${type}" step="any" placeholder="${ph}" value="${esc(getP(p))}">`;
 
+function ejPlano() {
+  const el = document.getElementById("ejPlano"); if (!el) return;
+  el.innerHTML = "<b>Ejemplos:</b> " + [100, 200, 300, 500, 800, 1000, 1500, 2000].map(n => { const p = precioPlano(n); return `${n} lotes → S/ ${p.impl} + S/ ${p.mens}/mes`; }).join(" · ");
+}
 function renderConfig() {
   let h = `
   <div class="card"><h3>General</h3><div class="row">
@@ -484,16 +520,15 @@ function renderConfig() {
     ${f("IGV % (0 si no aplica)", "igv")}
   </div></div>
 
-  <div class="card"><h3>Plano interactivo · implementación por N° de lotes</h3>
-    <div class="cfgrow"><small>Hasta N° lotes</small><small>Fijo (1) o por lote (0)</small><small>Parte plano</small><small>Parte visual</small><span></span></div>
-    ${cfg.planoLotes.map((t, i) => `<div class="cfgrow">${cell(`planoLotes.${i}.max`)}${cell(`planoLotes.${i}.fijo`)}${cell(`planoLotes.${i}.plano`)}${cell(`planoLotes.${i}.visual`)}<span></span></div>`).join("")}
-    <small>Total = parte plano + parte visual. Si el tramo es "fijo" es ese monto; si es "por lote" se multiplica por el N° de lotes. Con más lotes que el último tramo se sigue usando el último.</small>
-  </div>
-
-  <div class="card"><h3>Plano interactivo · mensualidad por tamaño</h3>
-    <div class="cfgrow"><small>Nombre</small><small>Hasta N° lotes</small><small>(no se usa)</small><small>Mensual</small><span></span></div>
-    ${cfg.plano.map((t, i) => `<div class="cfgrow">${cell(`plano.${i}.nombre`, "text")}${cell(`plano.${i}.max`)}${cell(`plano.${i}.impl`)}${cell(`plano.${i}.mens`)}<span></span></div>`).join("")}
-    <small>El último tamaño debe tener un número alto (ej. 99999) para cubrir los planos más grandes.</small>
+  <div class="card"><h3>Plano interactivo (sin fotos 360°) · fórmula por N° de lotes</h3>
+    <div class="row">${f("Precio base (hasta el 1.er tramo)", "planoForm.base")}</div>
+    <div class="cfgrow" style="margin-top:8px"><small>Desde el lote N°</small><small>Se cobra por cada lote (S/)</small><span></span><span></span><span></span></div>
+    ${cfg.planoForm.tramos.map((t, i) => `<div class="cfgrow">${cell(`planoForm.tramos.${i}.desde`)}${cell(`planoForm.tramos.${i}.tasa`)}<span></span><span></span><span></span></div>`).join("")}
+    <small>Implementación = base + (lotes dentro de cada tramo × su tarifa). Con los valores iniciales: 400 + 0.80 por cada lote entre 200 y 500 + 0.60 entre 500 y 1000 + 0.55 desde 1000.</small>
+    <h3 style="margin-top:14px">Mensualidad del plano</h3>
+    <div class="row">${f("Mensualidad base", "planoForm.mensBase")}${f("Se suma desde el lote N°", "planoForm.mensDesde")}${f("S/ por cada lote adicional", "planoForm.mensTasa")}</div>
+    <small>Mensualidad = base + tarifa × (lotes − N° de arranque). Valores iniciales: 40 + 0.02 por cada lote sobre 200.</small>
+    <div class="hint" id="ejPlano"></div>
   </div>
 
   <div class="card"><h3>Control de leads</h3>
@@ -540,15 +575,21 @@ function renderConfig() {
     <label style="margin-top:8px">No incluye<textarea data-p="noincluye" data-ta="1">${esc(cfg.noincluye)}</textarea></label>
   </div>`;
   $("#cfg").innerHTML = h;
+  ejPlano();
 }
 
 /* ============ EVENTOS ============ */
 function onField(e) {
   const t = e.target;
+  if (t.dataset.ov !== undefined) {
+    const c = t.dataset.ov; q.ov[c] = q.ov[c] || {};
+    q.ov[c][t.dataset.ok] = t.value;
+    renderQuote();
+    return;
+  }
   if (t.dataset.q) {
     const k = t.dataset.q;
     q[k] = t.type === "checkbox" ? t.checked : (t.dataset.num ? +t.value : t.value);
-    if (k === "lotes") autoTier();
     if (k === "usd") renderForm();
     renderQuote();
   } else if (t.dataset.s) {
@@ -575,14 +616,14 @@ document.addEventListener("change", e => {
   if (t.dataset.p) {
     const isNum = t.type === "number";
     setP(t.dataset.p, isNum ? (parseFloat(t.value) || 0) : t.value);
-    save(); renderForm(); renderQuote();
+    save(); renderForm(); renderQuote(); ejPlano();
   } else if (t.id === "imp") {
     const file = t.files[0]; if (!file) return;
     const rd = new FileReader();
     rd.onload = () => {
       try {
         const d = JSON.parse(rd.result);
-        if (!d.plano) throw 0;
+        if (!d.plano && !d.planoForm) throw 0;
         cfg = merge(d); save();
         renderConfig(); renderForm(); renderQuote();
         alert("Precios importados.");
@@ -592,12 +633,32 @@ document.addEventListener("change", e => {
   } else onField(e);
 });
 
+function descargarPNG(btn) {
+  const el = $("#cot");
+  const hacer = () => {
+    window.html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true }).then(cv => {
+      const l = document.createElement("a");
+      const nom = (q.cliente || "cotizacion").replace(/[^\w\-]+/g, "_");
+      l.download = "propuesta_" + nom + ".png"; l.href = cv.toDataURL("image/png"); l.click();
+      btn.textContent = "Descargar imagen (PNG)";
+    }).catch(() => { btn.textContent = "Descargar imagen (PNG)"; alert("No se pudo crear la imagen. Haz una captura de pantalla de la propuesta."); });
+  };
+  btn.textContent = "Creando imagen…";
+  if (window.html2canvas) return hacer();
+  const sc = document.createElement("script");
+  sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+  sc.onload = hacer;
+  sc.onerror = () => { btn.textContent = "Descargar imagen (PNG)"; alert("No hay internet para crear la imagen. Haz una captura de pantalla de la propuesta."); };
+  document.head.appendChild(sc);
+}
+
 function textoWA() {
   const r = calc();
   let s = `*Propuesta de servicios*\nCliente: ${q.cliente || "—"}\nProyecto: ${q.proyecto || "—"}\n\n`;
   r.L.forEach(x => { s += `• ${x.c}: ${x.impl ? fmt(x.impl) : "—"}${x.mens ? " + " + fmt(x.mens) + "/mes" : ""}\n`; });
   if (r.dPkImpl > 0) s += `\nDescuento paquete ${r.pk.n}: -${fmt(r.dPkImpl)}`;
   if (r.dExtra > 0) s += `\nDescuento comercial: -${fmt(r.dExtra)}`;
+  if (Math.abs(r.ajImpl) >= 0.5) s += `\nAjuste comercial: ${r.ajImpl < 0 ? "-" : "+"}${fmt(Math.abs(r.ajImpl))}`;
   s += `\n*Implementación: ${fmt(r.totImpl)}*` + (r.cred ? ` (credicontado: inicial ${cfg.credPct}% = ${fmt(r.adel)} + ${r.credMeses} cuotas de ${fmt(r.cuota)})` : ` (contado: adelanto ${cfg.adelanto}%: ${fmt(r.adel)})`);
   s += `\n*Mensualidad: ${fmt(r.totMens)}* (mínimo ${cfg.permanencia} meses)`;
   if (r.gratis > 0) s += `\n*Mantenimiento GRATIS los primeros ${r.gratis} meses* (valor ${fmt(r.valorGratis)}); la mensualidad se paga desde el mes ${r.gratis + 1}.`;
@@ -606,6 +667,7 @@ function textoWA() {
 }
 
 document.addEventListener("input", e => {
+  if (!e.target.closest || !e.target.closest("#conForm")) return;
   const k = e.target.dataset && e.target.dataset.k; if (!k) return;
   con[k] = e.target.type === "number" ? (e.target.value === "" ? "" : +e.target.value) : e.target.value;
   saveCon(); renderContrato();
@@ -632,6 +694,16 @@ document.addEventListener("click", e => {
     const t = textoWA();
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => alert("Texto copiado. Pégalo en WhatsApp."))
       .catch(() => { prompt("Copia este texto:", t); });
+  } else if (a === "clrov") {
+    q.ov = {}; q.finalImpl = ""; q.finalMens = ""; renderForm(); renderQuote();
+  } else if (a === "edtxt") {
+    const el = $("#cot"), on = el.contentEditable !== "true";
+    el.contentEditable = on ? "true" : "false";
+    el.style.outline = on ? "2px dashed #c9a227" : "";
+    $("#edAviso").textContent = on ? "Toca cualquier texto de la propuesta (a la derecha o abajo) para cambiarlo. Si luego cambias un dato del formulario, la propuesta se vuelve a generar." : "";
+    b.textContent = on ? "✔ Listo (dejar de editar)" : "✏️ Editar textos de la propuesta";
+  } else if (a === "png") {
+    descargarPNG(b);
   } else if (a === "addcu") { q.custom.push({ c: "", impl: 0, mens: 0 }); renderCust(); }
   else if (a === "delcu") { q.custom.splice(+b.dataset.i, 1); renderCust(); renderQuote(); }
   else if (a === "addrec") { cfg.recargos.push({ id: "r" + Date.now(), nombre: "Nuevo concepto", impl: 0, mens: 0 }); save(); renderConfig(); }
@@ -824,6 +896,7 @@ function renderContrato() {
   const dsc = [];
   if (r.dPkImpl > 0 || r.dPkMens > 0) dsc.push(`<tr><td>Descuento paquete ${esc(r.pk.n)}</td><td class="r">− ${m(r.dPkImpl)}</td><td class="r">− ${m(r.dPkMens)}</td></tr>`);
   if (r.dExtra > 0 || r.dMens > 0) dsc.push(`<tr><td>Descuento comercial</td><td class="r">− ${m(r.dExtra)}</td><td class="r">− ${m(r.dMens)}</td></tr>`);
+  if (Math.abs(r.ajImpl) >= 0.5 || Math.abs(r.ajMens) >= 0.5) dsc.push(`<tr><td>Ajuste comercial</td><td class="r">${r.ajImpl < 0 ? "− " : ""}${m(Math.abs(r.ajImpl))}</td><td class="r">${r.ajMens < 0 ? "− " : ""}${m(Math.abs(r.ajMens))}</td></tr>`);
   if (r.igv > 0) dsc.push(`<tr><td>IGV (${r.igv}%)</td><td class="r">${m(r.iImpl)}</td><td class="r">${m(r.iMens)}</td></tr>`);
   S.push(`<table class="anexo"><tr><th>Servicio</th><th class="r">Implementación</th><th class="r">Mensualidad</th></tr>${filas}${dsc.join("")}
     <tr class="tot"><td><b>Total</b></td><td class="r"><b>${m(r.totImpl)}</b></td><td class="r"><b>${m(r.totMens)}</b></td></tr></table>`);
@@ -858,7 +931,6 @@ function renderContrato() {
 }
 
 /* ============ INICIO ============ */
-autoTier();
 renderConfig();
 renderForm();
 renderQuote();
