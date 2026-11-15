@@ -76,7 +76,12 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 #conDoc ul{margin:4px 0 10px 20px;padding:0}
 .falta{background:#fff3a8;padding:0 3px;border-radius:3px}
 .salto{page-break-after:always}
+input.edt{width:84px;text-align:right;border:0;border-bottom:1px dashed #c9a227;border-radius:0;background:#fffdf3;padding:2px 3px;font:inherit;font-weight:inherit;color:inherit}
+.big input.edt{width:104px;font-size:inherit}
+#cot td.r{white-space:nowrap}
+#cot td input.edt{width:66px}
 @media print{
+  input.edt{border:0!important;background:none!important}
   #vCon .noprint{display:none!important}
   #conDoc{border:0;padding:0;max-width:none;font-size:12px}
   #conDoc h3{page-break-after:avoid}
@@ -336,10 +341,18 @@ function calc() {
 }
 
 /* ============ COTIZACIÓN (vista previa e impresión) ============ */
+function edt(attrs, val) {
+  if (q.usd) return val ? fmt(val) : "—";
+  const v = (val === "" || val == null || (+val === 0 && attrs.indexOf("data-ov") >= 0)) ? "" : String(Math.round(+val * 100) / 100);
+  return `S/ <input class="edt" inputmode="decimal" ${attrs} value="${esc(v)}" placeholder="—">`;
+}
 function renderQuote() {
   const r = calc();
+  const ae = document.activeElement;
+  const keep = ae && ae.closest && ae.closest("#cot") && ae.classList.contains("edt")
+    ? { ov: ae.dataset.ov, ok: ae.dataset.ok, q: ae.dataset.q, pos: ae.selectionStart, empty: ae.value.trim() === "" } : null;
   const hoy = new Date().toLocaleDateString("es-PE");
-  const filas = r.L.length ? r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${x.impl ? fmt(x.impl) : "—"}</td><td class="r">${x.mens ? fmt(x.mens) : "—"}</td></tr>`).join("")
+  const filas = r.L.length ? r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${edt(`data-ov="${esc(x.c)}" data-ok="impl"`, x.impl)}</td><td class="r">${edt(`data-ov="${esc(x.c)}" data-ok="mens"`, x.mens)}</td></tr>`).join("")
     : `<tr><td colspan="3"><small>Elige al menos un servicio.</small></td></tr>`;
   const ahorroImpl = r.dPkImpl + r.dExtra + Math.max(0, -r.ajImpl);
   const ahorroMens = r.dPkMens + r.dMens + Math.max(0, -r.ajMens);
@@ -363,7 +376,7 @@ function renderQuote() {
         ${r.dExtra > 0 ? `<div class="neg"><span>Descuento comercial${q.descTipo === "%" ? " (" + q.descExtra + "%)" : ""}</span><span>− ${fmt(r.dExtra)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iImpl)}</span></div>` : ""}
         ${Math.abs(r.ajImpl) >= 0.5 ? `<div class="${r.ajImpl < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajImpl < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajImpl))}</span></div>` : ""}
-        <div class="big"><span>TOTAL</span><span>${fmt(r.totImpl)}</span></div>
+        <div class="big"><span>TOTAL</span><span>${edt('data-q="finalImpl"', r.totImpl)}</span></div>
         ${r.cred ? `<div><span>Modalidad</span><span>Credicontado</span></div>
         <div><span>Inicial (${cfg.credPct}%)</span><span>${fmt(r.adel)}</span></div>
         <div><span>${r.credMeses} cuotas mensuales de</span><span>${fmt(r.cuota)}</span></div>`
@@ -377,7 +390,7 @@ function renderQuote() {
         ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial${q.descMensTipo === "S/" ? "" : " (" + q.descMens + "%)"}</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iMens)}</span></div>` : ""}
         ${Math.abs(r.ajMens) >= 0.5 ? `<div class="${r.ajMens < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajMens < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajMens))}</span></div>` : ""}
-        <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${fmt(r.totMens)}</span></div>
+        <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${edt('data-q="finalMens"', r.totMens)}</span></div>
         ${r.gratis > 0 ? `<div class="neg"><span>Mantenimiento GRATIS</span><span>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"}</span></div>` : ""}
         <div><small>Permanencia mínima: ${cfg.permanencia} meses${r.gratis > 0 ? " pagados, contados desde que termina el mantenimiento gratis" : ""}</small></div>
         ${r.cred && !r.gratis ? `<div><small>Durante los primeros ${r.credMeses} meses pagas la cuota + la mensualidad: <b>${fmt(r.cuota + r.totMens)}</b> al mes.</small></div>` : ""}
@@ -389,7 +402,11 @@ function renderQuote() {
       <b>No incluye (se cotiza aparte):</b><ul>${li(cfg.noincluye)}</ul>
       ${q.notas.trim() ? `<b>Notas:</b><br>${esc(q.notas).replace(/\n/g, "<br>")}` : ""}
     </div>`;
-  renderOv(false);
+  if (keep) {
+    const sel = keep.ov !== undefined ? `#cot input[data-ov="${(window.CSS && CSS.escape) ? CSS.escape(keep.ov) : keep.ov}"][data-ok="${keep.ok}"]` : `#cot input[data-q="${keep.q}"]`;
+    const el = document.querySelector(sel);
+    if (el) { if (keep.empty) el.value = ""; el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (x) {} }
+  }
   $("#mini").innerHTML = `<span>Implementación: <b>${fmt(r.totImpl)}</b></span><span>Mensual: <b>${r.gratis > 0 ? "Gratis " + r.gratis + " m · luego " : ""}${fmt(r.totMens)}</b></span>`;
 }
 
@@ -455,13 +472,7 @@ function renderForm() {
       <label style="margin-top:8px">Notas para el cliente<textarea data-q="notas">${esc(q.notas)}</textarea></label>
     </div>
     <div class="card"><h3>6 · Ajustar lo que sale en la propuesta</h3>
-      <small>Cambia cualquier monto antes de enviarla. Lo que dejes vacío se calcula solo.</small>
-      <div id="ovBox" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:8px">
-        <label>Precio FINAL de implementación (S/)<input type="number" data-q="finalImpl" placeholder="vacío = calculado" value="${esc(q.finalImpl)}"></label>
-        <label>Mensualidad FINAL (S/)<input type="number" data-q="finalMens" placeholder="vacío = calculado" value="${esc(q.finalMens)}"></label>
-      </div>
-      <div class="hint">Si pones un precio final, la propuesta muestra la diferencia como "Ajuste comercial" para que las cifras cuadren.</div>
+      <div class="hint" style="margin-top:0"><b>Toca cualquier monto de la propuesta</b> (a la derecha o abajo) y escribe el que quieras: línea por línea, o el TOTAL. Lo que no toques se calcula solo con tu fórmula. Si cambias el TOTAL, aparece una línea "Ajuste comercial" para que las cifras cuadren.</div>
       <div class="bar" style="margin:10px 0 0">
         <button class="b" data-act="png">Descargar imagen (PNG)</button>
         <button class="b sec" data-act="edtxt">✏️ Editar textos de la propuesta</button>
@@ -469,22 +480,7 @@ function renderForm() {
       </div>
       <small id="edAviso"></small>
     </div>`;
-  renderCust(); renderOv(true);
-}
-/* Ajustes manuales por línea: se vuelve a dibujar solo si cambian los conceptos, para no perder el cursor al escribir */
-let ovSig = "";
-function renderOv(force) {
-  const box = document.getElementById("ovBox"); if (!box) return;
-  const r = calc();
-  const sig = r.L.map(x => x.c).join("|");
-  if (!force && sig === ovSig) return;
-  ovSig = sig;
-  box.innerHTML = r.L.length ? `<div class="cu" style="grid-template-columns:2fr 1fr 1fr"><small>Concepto</small><small>Implementación</small><small>Mensual</small></div>` + r.L.map(x => {
-    const o = q.ov[x.c] || {};
-    return `<div class="cu" style="grid-template-columns:2fr 1fr 1fr"><small>${esc(x.c)}</small>
-      <input type="number" data-ov="${esc(x.c)}" data-ok="impl" placeholder="${Math.round(x.i0)}" value="${o.impl === undefined ? "" : esc(o.impl)}">
-      <input type="number" data-ov="${esc(x.c)}" data-ok="mens" placeholder="${Math.round(x.m0)}" value="${o.mens === undefined ? "" : esc(o.mens)}"></div>`;
-  }).join("") : "<small>Elige al menos un servicio.</small>";
+  renderCust();
 }
 function renderCust() {
   $("#cust").innerHTML = q.custom.map((x, i) => `
@@ -583,13 +579,14 @@ function onField(e) {
   const t = e.target;
   if (t.dataset.ov !== undefined) {
     const c = t.dataset.ov; q.ov[c] = q.ov[c] || {};
-    q.ov[c][t.dataset.ok] = t.value;
+    const val = t.value.replace(",", ".").trim();
+    if (val === "" || isNaN(+val)) delete q.ov[c][t.dataset.ok]; else q.ov[c][t.dataset.ok] = val;
     renderQuote();
     return;
   }
   if (t.dataset.q) {
     const k = t.dataset.q;
-    q[k] = t.type === "checkbox" ? t.checked : (t.dataset.num ? +t.value : t.value);
+    q[k] = t.type === "checkbox" ? t.checked : (t.dataset.num ? +t.value : (k === "finalImpl" || k === "finalMens" ? t.value.replace(",", ".").trim() : t.value));
     if (k === "usd") renderForm();
     renderQuote();
   } else if (t.dataset.s) {
