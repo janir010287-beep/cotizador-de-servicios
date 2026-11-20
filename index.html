@@ -76,12 +76,11 @@ button.b.del{background:#fff;color:var(--mal);border:1px solid var(--mal);paddin
 #conDoc ul{margin:4px 0 10px 20px;padding:0}
 .falta{background:#fff3a8;padding:0 3px;border-radius:3px}
 .salto{page-break-after:always}
-input.edt{width:84px;text-align:right;border:0;border-bottom:1px dashed #c9a227;border-radius:0;background:#fffdf3;padding:2px 3px;font:inherit;font-weight:inherit;color:inherit}
-.big input.edt{width:104px;font-size:inherit}
-#cot td.r{white-space:nowrap}
-#cot td input.edt{width:66px}
+input.ed{width:92px;text-align:right;border:1px dashed #c9c2a8;background:#fffdf3;padding:3px 5px;border-radius:5px;font:inherit}
+input.ed.mod{background:#fff3a8;border-color:#d4b200}
 @media print{
-  input.edt{border:0!important;background:none!important}
+  input.ed{border:0;background:none;width:auto;padding:0;-moz-appearance:textfield}
+  input.ed::-webkit-inner-spin-button{display:none}
   #vCon .noprint{display:none!important}
   #conDoc{border:0;padding:0;max-width:none;font-size:12px}
   #conDoc h3{page-break-after:avoid}
@@ -182,7 +181,7 @@ const DEF = {
   ],
   /* Fotos 360° con GPS: 1 día de trabajo cubre "haDia" hectáreas y "fotosDia" fotos.
      comida y alojamiento son valores de ejemplo: ajústalos en la pestaña Precios. */
-  foto: { haDia: 3, fotosDia: 21, precioDia: 700, porHa: 250, resta: 50, comida: 60, alojamiento: 80, subida: 0, mens: 30,
+  foto: { cliPorFoto: 17, cliMin: 50, cliMens: 0, haDia: 3, fotosDia: 21, precioDia: 700, porHa: 250, resta: 50, comida: 60, alojamiento: 80, subida: 0, mens: 30,
     /* Recorrido: mientras más separados estén los puntos, menos fotos se toman por día */
     niveles: [
       { id: "n1", nombre: "Compacto (puntos cercanos)", fotosDia: 21, extra: 0  },
@@ -278,6 +277,11 @@ function calc() {
     const dias = q.foto.dias > 0 ? +q.foto.dias : Math.max(1, Math.ceil(fotos / (niv.fotosDia || 1)));
     const diasBase = Math.max(1, Math.ceil(fotos / (nivBase.fotosDia || 1)));
     const pl = n => n > 1 ? "s" : "";
+    if (q.foto.modo === "cliente") {
+      const nf = Math.max(0, Math.round(+q.foto.fotos || 0));
+      const pf = +F.cliPorFoto || 0, mn = +F.cliMin || 0;
+      L.push({ c: `Incrustación de fotos 360° enviadas por el cliente (${nf} foto${nf === 1 ? "" : "s"} · S/ ${pf} por foto, mínimo S/ ${mn})`, impl: nf > 0 ? Math.max(mn, pf * nf) : 0, mens: +F.cliMens || 0 });
+    } else {
     /* Precio base: hasta haDia hectáreas = precioDia; más grande = porHa × ha − resta (ej. 250×h − 50). Sin hectáreas: días × precioDia */
     const precioHa = ha > 0 ? (ha <= (+F.haDia || 3) ? +F.precioDia : Math.max(+F.precioDia, (+F.porHa || 0) * ha - (+F.resta || 0))) : dias * F.precioDia;
     L.push({
@@ -293,20 +297,13 @@ function calc() {
       if (n > 0) L.push({ c: `Alojamiento (${n} noche${pl(n)})`, impl: n * F.alojamiento, mens: 0 });
     }
     if (q.foto.comida) L.push({ c: `Alimentación (${dias} día${pl(dias)})`, impl: dias * F.comida, mens: 0 });
+    }
   }
   q.custom.forEach(x => {
     if ((x.c || "").trim() || +x.impl || +x.mens) L.push({ c: x.c || "Otro concepto", impl: +x.impl || 0, mens: +x.mens || 0 });
   });
 
-  /* Ajustes manuales de salida por línea */
-  L.forEach(x => {
-    x.i0 = x.impl; x.m0 = x.mens;
-    const o = q.ov[x.c];
-    if (o) {
-      if (o.impl !== "" && o.impl != null && !isNaN(+o.impl)) x.impl = +o.impl;
-      if (o.mens !== "" && o.mens != null && !isNaN(+o.mens)) x.mens = +o.mens;
-    }
-  });
+  L.forEach(x => { x.auto = { impl: x.impl, mens: x.mens }; const o = (q.ov || {})[x.c]; if (o) { if (o.impl !== undefined && o.impl !== "") x.impl = +o.impl || 0; if (o.mens !== undefined && o.mens !== "") x.mens = +o.mens || 0; } });
   const baseImpl = L.filter(x => x.base).reduce((a, x) => a + x.impl, 0);
   const baseMens = L.filter(x => x.base).reduce((a, x) => a + x.mens, 0);
   let pk = null;
@@ -327,7 +324,6 @@ function calc() {
   const igv = +cfg.igv || 0;
   const iImpl = netImpl * igv / 100, iMens = netMens * igv / 100;
   let totImpl = netImpl + iImpl, totMens = netMens + iMens;
-  /* Precio final manual (opcional): se muestra como "Ajuste comercial" para que las cifras cuadren */
   let ajImpl = 0, ajMens = 0;
   if (q.finalImpl !== "" && q.finalImpl != null && !isNaN(+q.finalImpl)) { ajImpl = +q.finalImpl - totImpl; totImpl = +q.finalImpl; }
   if (q.finalMens !== "" && q.finalMens != null && !isNaN(+q.finalMens)) { ajMens = +q.finalMens - totMens; totMens = +q.finalMens; }
@@ -341,21 +337,20 @@ function calc() {
 }
 
 /* ============ COTIZACIÓN (vista previa e impresión) ============ */
-function edt(attrs, val) {
-  if (q.usd) return val ? fmt(val) : "—";
-  const v = (val === "" || val == null || (+val === 0 && attrs.indexOf("data-ov") >= 0)) ? "" : String(Math.round(+val * 100) / 100);
-  return `S/ <input class="edt" inputmode="decimal" ${attrs} value="${esc(v)}" placeholder="—">`;
-}
-function renderQuote() {
-  const r = calc();
+function renderQuote(keep) {
   const ae = document.activeElement;
-  const keep = ae && ae.closest && ae.closest("#cot") && ae.classList.contains("edt")
-    ? { ov: ae.dataset.ov, ok: ae.dataset.ok, q: ae.dataset.q, pos: ae.selectionStart, empty: ae.value.trim() === "" } : null;
+  const fk = keep && ae && ae.dataset && ae.dataset.ov !== undefined ? { k: ae.dataset.ov, f: ae.dataset.f, p: ae.selectionStart } : null;
+  renderQuote0();
+  if (fk) { const el = [...document.querySelectorAll("input[data-ov]")].find(i => i.dataset.ov === fk.k && i.dataset.f === fk.f); if (el) { el.focus(); try { el.setSelectionRange(fk.p, fk.p); } catch (x) {} } }
+}
+function renderQuote0() {
+  const r = calc();
   const hoy = new Date().toLocaleDateString("es-PE");
-  const filas = r.L.length ? r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${edt(`data-ov="${esc(x.c)}" data-ok="impl"`, x.impl)}</td><td class="r">${edt(`data-ov="${esc(x.c)}" data-ok="mens"`, x.mens)}</td></tr>`).join("")
+  const ed = (x, f) => `<input class="ed${(q.ov[x.c] && q.ov[x.c][f] !== undefined && q.ov[x.c][f] !== "") ? " mod" : ""}" type="number" step="any" data-ov="${esc(x.c)}" data-f="${f}" value="${Math.round(x[f] * 100) / 100}">`;
+  const filas = r.L.length ? r.L.map(x => `<tr><td>${esc(x.c)}</td><td class="r">${ed(x, "impl")}</td><td class="r">${ed(x, "mens")}</td></tr>`).join("")
     : `<tr><td colspan="3"><small>Elige al menos un servicio.</small></td></tr>`;
-  const ahorroImpl = r.dPkImpl + r.dExtra + Math.max(0, -r.ajImpl);
-  const ahorroMens = r.dPkMens + r.dMens + Math.max(0, -r.ajMens);
+  const ahorroImpl = r.dPkImpl + r.dExtra;
+  const ahorroMens = r.dPkMens + r.dMens;
   const ahorroTxt = (ahorroImpl > 0 || ahorroMens > 0 || r.gratis > 0)
     ? `<div class="ahorro">Ahorro para el cliente: ${ahorroImpl > 0 ? `<b>${fmt(ahorroImpl)}</b> en la implementación` : ""}${ahorroMens > 0 ? `${ahorroImpl > 0 ? " y " : ""}<b>${fmt(ahorroMens)}</b> al mes` : ""}${r.gratis > 0 ? `${ahorroImpl > 0 || ahorroMens > 0 ? ". Además, " : ""}<b>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"} de mantenimiento gratis</b> (valor ${fmt(r.valorGratis)})` : ""}.</div>` : "";
   const li = t => String(t || "").split("\n").filter(x => x.trim()).map(x => `<li>${esc(x)}</li>`).join("");
@@ -375,8 +370,8 @@ function renderQuote() {
         ${r.dPkImpl > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.impl}%)</span><span>− ${fmt(r.dPkImpl)}</span></div>` : ""}
         ${r.dExtra > 0 ? `<div class="neg"><span>Descuento comercial${q.descTipo === "%" ? " (" + q.descExtra + "%)" : ""}</span><span>− ${fmt(r.dExtra)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iImpl)}</span></div>` : ""}
-        ${Math.abs(r.ajImpl) >= 0.5 ? `<div class="${r.ajImpl < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajImpl < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajImpl))}</span></div>` : ""}
-        <div class="big"><span>TOTAL</span><span>${edt('data-q="finalImpl"', r.totImpl)}</span></div>
+        ${Math.abs(r.ajImpl) > 0.005 ? `<div class="${r.ajImpl < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajImpl < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajImpl))}</span></div>` : ""}
+        <div class="big"><span>TOTAL</span><span>${fmt(r.totImpl)}</span></div>
         ${r.cred ? `<div><span>Modalidad</span><span>Credicontado</span></div>
         <div><span>Inicial (${cfg.credPct}%)</span><span>${fmt(r.adel)}</span></div>
         <div><span>${r.credMeses} cuotas mensuales de</span><span>${fmt(r.cuota)}</span></div>`
@@ -389,8 +384,8 @@ function renderQuote() {
         ${r.dPkMens > 0 ? `<div class="neg"><span>Descuento paquete ${r.pk.n} (${r.pk.p.mens}%)</span><span>− ${fmt(r.dPkMens)}</span></div>` : ""}
         ${r.dMens > 0 ? `<div class="neg"><span>Descuento comercial${q.descMensTipo === "S/" ? "" : " (" + q.descMens + "%)"}</span><span>− ${fmt(r.dMens)}</span></div>` : ""}
         ${r.igv > 0 ? `<div><span>IGV (${r.igv}%)</span><span>${fmt(r.iMens)}</span></div>` : ""}
-        ${Math.abs(r.ajMens) >= 0.5 ? `<div class="${r.ajMens < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajMens < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajMens))}</span></div>` : ""}
-        <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${edt('data-q="finalMens"', r.totMens)}</span></div>
+        ${Math.abs(r.ajMens) > 0.005 ? `<div class="${r.ajMens < 0 ? "neg" : ""}"><span>Ajuste comercial</span><span>${r.ajMens < 0 ? "− " : "+ "}${fmt(Math.abs(r.ajMens))}</span></div>` : ""}
+        <div class="big"><span>${r.gratis > 0 ? "MENSUALIDAD (desde el mes " + (r.gratis + 1) + ")" : "TOTAL / MES"}</span><span>${fmt(r.totMens)}</span></div>
         ${r.gratis > 0 ? `<div class="neg"><span>Mantenimiento GRATIS</span><span>${r.gratis} ${r.gratis === 1 ? "mes" : "meses"}</span></div>` : ""}
         <div><small>Permanencia mínima: ${cfg.permanencia} meses${r.gratis > 0 ? " pagados, contados desde que termina el mantenimiento gratis" : ""}</small></div>
         ${r.cred && !r.gratis ? `<div><small>Durante los primeros ${r.credMeses} meses pagas la cuota + la mensualidad: <b>${fmt(r.cuota + r.totMens)}</b> al mes.</small></div>` : ""}
@@ -402,11 +397,6 @@ function renderQuote() {
       <b>No incluye (se cotiza aparte):</b><ul>${li(cfg.noincluye)}</ul>
       ${q.notas.trim() ? `<b>Notas:</b><br>${esc(q.notas).replace(/\n/g, "<br>")}` : ""}
     </div>`;
-  if (keep) {
-    const sel = keep.ov !== undefined ? `#cot input[data-ov="${(window.CSS && CSS.escape) ? CSS.escape(keep.ov) : keep.ov}"][data-ok="${keep.ok}"]` : `#cot input[data-q="${keep.q}"]`;
-    const el = document.querySelector(sel);
-    if (el) { if (keep.empty) el.value = ""; el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (x) {} }
-  }
   $("#mini").innerHTML = `<span>Implementación: <b>${fmt(r.totImpl)}</b></span><span>Mensual: <b>${r.gratis > 0 ? "Gratis " + r.gratis + " m · luego " : ""}${fmt(r.totMens)}</b></span>`;
 }
 
@@ -417,9 +407,10 @@ function renderForm() {
     const s = q.rec[r.id] || { on: false, qty: 1 };
     return `<div class="rec"><label class="chk"><input type="checkbox" data-rec="${esc(r.id)}" data-k="on" ${s.on ? "checked" : ""}>${esc(r.nombre)} <small>(${fmt(r.impl)})</small></label><input class="qty" type="number" min="1" data-rec="${esc(r.id)}" data-k="qty" value="${s.qty || 1}" title="Cantidad"></div>`;
   }).join("");
-  const pkOpts = `<option value="medida" ${q.foto.modo === "medida" ? "selected" : ""}>A medida (por hectáreas)</option>` +
+  const pkOpts = `<option value="medida" ${q.foto.modo === "medida" ? "selected" : ""}>A medida (por hectáreas)</option><option value="cliente" ${q.foto.modo === "cliente" ? "selected" : ""}>El cliente envía sus fotos 360° (yo solo las incrusto)</option>` +
     (cfg.foto.paquetes || []).map(p => `<option value="${esc(p.id)}" ${q.foto.modo === p.id ? "selected" : ""}>${esc(p.nombre)} · ${p.ha} ha · ${p.fotos} fotos · ${fmt(p.precio)}</option>`).join("");
   const enPaquete = (cfg.foto.paquetes || []).some(p => p.id === q.foto.modo);
+  const delCliente = q.foto.modo === "cliente";
   const nivOpts = (cfg.foto.niveles || []).map(n => `<option value="${esc(n.id)}" ${q.foto.nivel === n.id ? "selected" : ""}>${esc(n.nombre)} · ${n.fotosDia} fotos/día</option>`).join("");
   $("#form").innerHTML = `
     <div class="card"><h3>1 · Cliente y proyecto</h3>
@@ -441,21 +432,29 @@ function renderForm() {
     <div class="card"><h3>3b · Fotos 360° con GPS (por hectáreas)</h3>
       <label class="chk"><input type="checkbox" data-ft="on" ${q.foto.on ? "checked" : ""}>Incluir toma de fotos 360°</label>
       <label style="margin-top:8px">Paquete o a medida<select data-ft="modo">${pkOpts}</select></label>
-      <label style="margin-top:8px">Recorrido entre los puntos de foto<select data-ft="nivel">${nivOpts}</select></label>
-      <div class="row" style="margin-top:8px">
+      <label style="margin-top:8px;${delCliente ? "display:none" : ""}">Recorrido entre los puntos de foto<select data-ft="nivel">${nivOpts}</select></label>
+      <div class="row" style="margin-top:8px;${delCliente ? "display:none" : ""}">
         <label>Hectáreas del proyecto${enPaquete ? " (las fija el paquete)" : ""}<input type="number" min="0" step="any" data-ft="ha" data-num="1" value="${q.foto.ha}" ${enPaquete ? "disabled" : ""}></label>
         <label>Fotos que pide el cliente (0 = según hectáreas)<input type="number" min="0" data-ft="fotos" data-num="1" value="${q.foto.fotos}" ${enPaquete ? "disabled" : ""}></label>
         <label>Días de trabajo (0 = automático)<input type="number" min="0" data-ft="dias" data-num="1" value="${q.foto.dias}"></label>
         <label>Pasajes / movilidad (S/)<input type="number" min="0" data-ft="pasajes" data-num="1" value="${q.foto.pasajes}"></label>
         <label>Noches de alojamiento (0 = automático)<input type="number" min="0" data-ft="noches" data-num="1" value="${q.foto.noches}"></label>
       </div>
-      <label class="chk" style="margin-top:8px"><input type="checkbox" data-ft="aloj" ${q.foto.aloj ? "checked" : ""}>Cobrar alojamiento</label>
-      <label class="chk"><input type="checkbox" data-ft="comida" ${q.foto.comida ? "checked" : ""}>Cobrar alimentación</label>
-      <div class="hint">Hasta ${cfg.foto.haDia} ha = S/ ${cfg.foto.precioDia}. Más de ${cfg.foto.haDia} ha = ${cfg.foto.porHa} × ha − ${cfg.foto.resta}. Si el cliente pide pocas fotos en un terreno grande, escribe cuántas y elige el recorrido: los días se calculan según la distancia entre puntos.</div>
+      <div style="${delCliente ? "display:none" : ""}"><label class="chk" style="margin-top:8px"><input type="checkbox" data-ft="aloj" ${q.foto.aloj ? "checked" : ""}>Cobrar alojamiento</label>
+      <label class="chk"><input type="checkbox" data-ft="comida" ${q.foto.comida ? "checked" : ""}>Cobrar alimentación</label></div>
+      ${delCliente ? `<div class="row" style="margin-top:8px"><label>N.º de fotos que envía el cliente<input type="number" min="0" data-ft="fotos" data-num="1" value="${q.foto.fotos}"></label></div>
+      <div class="hint">Fórmula: <b>MAX(S/ ${cfg.foto.cliMin}; S/ ${cfg.foto.cliPorFoto} × N.º de fotos)</b>. Sin viáticos ni días de campo. Cambia los valores en Precios.</div>` : ""}
+      <div class="hint" style="${delCliente ? "display:none" : ""}">Hasta ${cfg.foto.haDia} ha = S/ ${cfg.foto.precioDia}. Más de ${cfg.foto.haDia} ha = ${cfg.foto.porHa} × ha − ${cfg.foto.resta}. Si el cliente pide pocas fotos en un terreno grande, escribe cuántas y elige el recorrido: los días se calculan según la distancia entre puntos.</div>
     </div>
     <div class="card"><h3>4 · Otros conceptos (a pedido del cliente)</h3><div id="cust"></div>
       <button class="b sec" data-act="addcu">+ Agregar concepto</button></div>
     <div class="card"><h3>5 · Ajustes</h3>
+      <div class="row">
+        <label>Precio final implementación (opcional)<input type="number" min="0" step="any" data-q="finalImpl" placeholder="automático" value="${q.finalImpl}"></label>
+        <label>Precio final mensual (opcional)<input type="number" min="0" step="any" data-q="finalMens" placeholder="automático" value="${q.finalMens}"></label>
+      </div>
+      <div class="hint">Los montos de la propuesta también se pueden editar tocándolos. Si fijas un precio final, la diferencia aparece como «Ajuste comercial». <button class="b sec" data-act="clrov" style="padding:4px 10px">Quitar todos los ajustes</button></div>
+      <div style="height:8px"></div>
       <div class="row">
         <label>Descuento en implementación<input type="number" min="0" data-q="descExtra" data-num="1" value="${q.descExtra}"></label>
         <label>Tipo de descuento<select data-q="descTipo"><option value="%" ${q.descTipo === "%" ? "selected" : ""}>Porcentaje (%)</option><option value="S/" ${q.descTipo === "S/" ? "selected" : ""}>Monto (S/)</option></select></label>
@@ -470,15 +469,6 @@ function renderForm() {
       <label class="chk" style="margin-top:8px"><input type="checkbox" data-q="aplicaPaquete" ${q.aplicaPaquete ? "checked" : ""}>Aplicar descuento de paquete</label>
       <label class="chk"><input type="checkbox" data-q="usd" ${q.usd ? "checked" : ""}>Mostrar en dólares (T.C. ${cfg.tc})</label>
       <label style="margin-top:8px">Notas para el cliente<textarea data-q="notas">${esc(q.notas)}</textarea></label>
-    </div>
-    <div class="card"><h3>6 · Ajustar lo que sale en la propuesta</h3>
-      <div class="hint" style="margin-top:0"><b>Toca cualquier monto de la propuesta</b> (a la derecha o abajo) y escribe el que quieras: línea por línea, o el TOTAL. Lo que no toques se calcula solo con tu fórmula. Si cambias el TOTAL, aparece una línea "Ajuste comercial" para que las cifras cuadren.</div>
-      <div class="bar" style="margin:10px 0 0">
-        <button class="b" data-act="png">Descargar imagen (PNG)</button>
-        <button class="b sec" data-act="edtxt">✏️ Editar textos de la propuesta</button>
-        <button class="b del" data-act="clrov">Quitar ajustes</button>
-      </div>
-      <small id="edAviso"></small>
     </div>`;
   renderCust();
 }
@@ -543,6 +533,10 @@ function renderConfig() {
     ${f("Completo · implementación %", "paq.completo.impl")}${f("Completo · mensual %", "paq.completo.mens")}
   </div></div>
 
+  <div class="card"><h3>Fotos 360° enviadas por el cliente (solo incrustar)</h3><div class="row">
+    ${f("Precio por foto (S/)", "foto.cliPorFoto")}${f("Precio mínimo (S/)", "foto.cliMin")}${f("Mantenimiento mensual (S/, 0 si no cobras)", "foto.cliMens")}
+  </div><div class="hint">Precio = MAX(mínimo; precio por foto × N.º de fotos). Excel: =MAX(50;17*A2)</div></div>
+
   <div class="card"><h3>Fotos 360° con GPS</h3><div class="row">
     ${f("Hectáreas por día (solo para estimar fotos si el cliente no dice cuántas)", "foto.haDia")}${f("Fotos por hectárea-día base (fotos que caben en esas hectáreas)", "foto.fotosDia")}
     ${f("Precio hasta las hectáreas por día (S/)", "foto.precioDia")}${f("Terreno grande: precio por hectárea (S/)", "foto.porHa")}${f("Terreno grande: descuento fijo (S/)", "foto.resta")}${f("Alimentación por día (S/)", "foto.comida")}
@@ -577,16 +571,9 @@ function renderConfig() {
 /* ============ EVENTOS ============ */
 function onField(e) {
   const t = e.target;
-  if (t.dataset.ov !== undefined) {
-    const c = t.dataset.ov; q.ov[c] = q.ov[c] || {};
-    const val = t.value.replace(",", ".").trim();
-    if (val === "" || isNaN(+val)) delete q.ov[c][t.dataset.ok]; else q.ov[c][t.dataset.ok] = val;
-    renderQuote();
-    return;
-  }
   if (t.dataset.q) {
     const k = t.dataset.q;
-    q[k] = t.type === "checkbox" ? t.checked : (t.dataset.num ? +t.value : (k === "finalImpl" || k === "finalMens" ? t.value.replace(",", ".").trim() : t.value));
+    q[k] = t.type === "checkbox" ? t.checked : ((k === "finalImpl" || k === "finalMens") ? t.value : (t.dataset.num ? +t.value : t.value));
     if (k === "usd") renderForm();
     renderQuote();
   } else if (t.dataset.s) {
@@ -602,6 +589,10 @@ function onField(e) {
     q.foto[k] = t.type === "checkbox" ? t.checked : ((k === "modo" || k === "nivel") ? t.value : (+t.value || 0));
     if (k === "modo") renderForm();
     renderQuote();
+  } else if (t.dataset.ov !== undefined) {
+    const o = q.ov[t.dataset.ov] = q.ov[t.dataset.ov] || {};
+    o[t.dataset.f] = t.value;
+    renderQuote(true);
   } else if (t.dataset.cu !== undefined) {
     q.custom[+t.dataset.cu][t.dataset.f] = t.dataset.f === "c" ? t.value : (+t.value || 0);
     renderQuote();
@@ -630,32 +621,13 @@ document.addEventListener("change", e => {
   } else onField(e);
 });
 
-function descargarPNG(btn) {
-  const el = $("#cot");
-  const hacer = () => {
-    window.html2canvas(el, { scale: 2, backgroundColor: "#ffffff", useCORS: true }).then(cv => {
-      const l = document.createElement("a");
-      const nom = (q.cliente || "cotizacion").replace(/[^\w\-]+/g, "_");
-      l.download = "propuesta_" + nom + ".png"; l.href = cv.toDataURL("image/png"); l.click();
-      btn.textContent = "Descargar imagen (PNG)";
-    }).catch(() => { btn.textContent = "Descargar imagen (PNG)"; alert("No se pudo crear la imagen. Haz una captura de pantalla de la propuesta."); });
-  };
-  btn.textContent = "Creando imagen…";
-  if (window.html2canvas) return hacer();
-  const sc = document.createElement("script");
-  sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-  sc.onload = hacer;
-  sc.onerror = () => { btn.textContent = "Descargar imagen (PNG)"; alert("No hay internet para crear la imagen. Haz una captura de pantalla de la propuesta."); };
-  document.head.appendChild(sc);
-}
-
 function textoWA() {
   const r = calc();
   let s = `*Propuesta de servicios*\nCliente: ${q.cliente || "—"}\nProyecto: ${q.proyecto || "—"}\n\n`;
   r.L.forEach(x => { s += `• ${x.c}: ${x.impl ? fmt(x.impl) : "—"}${x.mens ? " + " + fmt(x.mens) + "/mes" : ""}\n`; });
   if (r.dPkImpl > 0) s += `\nDescuento paquete ${r.pk.n}: -${fmt(r.dPkImpl)}`;
   if (r.dExtra > 0) s += `\nDescuento comercial: -${fmt(r.dExtra)}`;
-  if (Math.abs(r.ajImpl) >= 0.5) s += `\nAjuste comercial: ${r.ajImpl < 0 ? "-" : "+"}${fmt(Math.abs(r.ajImpl))}`;
+  if (Math.abs(r.ajImpl) > 0.005) s += `\nAjuste comercial: ${r.ajImpl < 0 ? "-" : "+"}${fmt(Math.abs(r.ajImpl))}`;
   s += `\n*Implementación: ${fmt(r.totImpl)}*` + (r.cred ? ` (credicontado: inicial ${cfg.credPct}% = ${fmt(r.adel)} + ${r.credMeses} cuotas de ${fmt(r.cuota)})` : ` (contado: adelanto ${cfg.adelanto}%: ${fmt(r.adel)})`);
   s += `\n*Mensualidad: ${fmt(r.totMens)}* (mínimo ${cfg.permanencia} meses)`;
   if (r.gratis > 0) s += `\n*Mantenimiento GRATIS los primeros ${r.gratis} meses* (valor ${fmt(r.valorGratis)}); la mensualidad se paga desde el mes ${r.gratis + 1}.`;
@@ -664,7 +636,6 @@ function textoWA() {
 }
 
 document.addEventListener("input", e => {
-  if (!e.target.closest || !e.target.closest("#conForm")) return;
   const k = e.target.dataset && e.target.dataset.k; if (!k) return;
   con[k] = e.target.type === "number" ? (e.target.value === "" ? "" : +e.target.value) : e.target.value;
   saveCon(); renderContrato();
@@ -691,17 +662,8 @@ document.addEventListener("click", e => {
     const t = textoWA();
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => alert("Texto copiado. Pégalo en WhatsApp."))
       .catch(() => { prompt("Copia este texto:", t); });
-  } else if (a === "clrov") {
-    q.ov = {}; q.finalImpl = ""; q.finalMens = ""; renderForm(); renderQuote();
-  } else if (a === "edtxt") {
-    const el = $("#cot"), on = el.contentEditable !== "true";
-    el.contentEditable = on ? "true" : "false";
-    el.style.outline = on ? "2px dashed #c9a227" : "";
-    $("#edAviso").textContent = on ? "Toca cualquier texto de la propuesta (a la derecha o abajo) para cambiarlo. Si luego cambias un dato del formulario, la propuesta se vuelve a generar." : "";
-    b.textContent = on ? "✔ Listo (dejar de editar)" : "✏️ Editar textos de la propuesta";
-  } else if (a === "png") {
-    descargarPNG(b);
-  } else if (a === "addcu") { q.custom.push({ c: "", impl: 0, mens: 0 }); renderCust(); }
+  } else if (a === "clrov") { q.ov = {}; q.finalImpl = ""; q.finalMens = ""; renderForm(); renderQuote(); }
+  else if (a === "addcu") { q.custom.push({ c: "", impl: 0, mens: 0 }); renderCust(); }
   else if (a === "delcu") { q.custom.splice(+b.dataset.i, 1); renderCust(); renderQuote(); }
   else if (a === "addrec") { cfg.recargos.push({ id: "r" + Date.now(), nombre: "Nuevo concepto", impl: 0, mens: 0 }); save(); renderConfig(); }
   else if (a === "addpk") { cfg.foto.paquetes.push({ id: "f" + Date.now(), nombre: "Nuevo paquete", ha: 0, fotos: 0, precio: 0, mens: 0 }); save(); renderConfig(); }
@@ -845,7 +807,11 @@ function renderContrato() {
   P(`10.4 Cada parte mantendrá en reserva la información confidencial de la otra durante el Contrato y ${v(con.anosConf, "N")} años después, y no la usará para otro fin. No es confidencial la información pública ni la que deba revelarse por mandato de autoridad.`);
 
   H("Cláusula 11. Fotos 360° y trabajo de campo");
-  if (q.foto.on) {
+  if (q.foto.on && q.foto.modo === "cliente") {
+    P(`11.1 El Cliente entregará al Prestador las imágenes 360° ya tomadas, en formato digital y en la cantidad indicada en el Anexo A (${n(q.foto.fotos || 0)} fotos). El Prestador solo las incorpora al visor y las asocia a su ubicación en el plano; no realiza trabajo de campo ni cobra viáticos.`);
+    P(`11.2 El Cliente declara ser titular de las imágenes o contar con los derechos para su uso y publicación, y mantiene indemne al Prestador frente a reclamos de terceros por ese motivo. La calidad, nitidez, orientación y cobertura de las imágenes son responsabilidad del Cliente; el Prestador puede optimizar su peso y tamaño para que carguen en celulares.`);
+    P(`11.3 La ubicación de cada foto en el plano se hace con los datos que indique el Cliente (GPS de la foto u otra referencia) y es referencial. Las fotos adicionales o cambios posteriores se cobran a la tarifa del Anexo A.`);
+  } else if (q.foto.on) {
     P(`11.1 Los viáticos del trabajo de campo (pasajes, movilidad, alojamiento y alimentación) son por cuenta del Cliente, según lo indicado en el Anexo A o en una cotización aprobada.`);
     P(`11.2 El Cliente garantiza el acceso al terreno en condiciones de seguridad y las autorizaciones necesarias. Si por clima, falta de acceso, seguridad u otra causa ajena al Prestador no se puede trabajar, el día se reprograma sin cobrar de nuevo el servicio, pero los gastos ya incurridos corren por cuenta del Cliente.`);
     P(`11.3 Los días de trabajo se calculan según las fotos solicitadas y el recorrido indicados en el Anexo A. Si el trabajo real resulta más extenso por cambios pedidos por el Cliente (puntos, accesos o cantidad de fotos), se cobran los días adicionales a la tarifa del Anexo A.`);
@@ -893,8 +859,8 @@ function renderContrato() {
   const dsc = [];
   if (r.dPkImpl > 0 || r.dPkMens > 0) dsc.push(`<tr><td>Descuento paquete ${esc(r.pk.n)}</td><td class="r">− ${m(r.dPkImpl)}</td><td class="r">− ${m(r.dPkMens)}</td></tr>`);
   if (r.dExtra > 0 || r.dMens > 0) dsc.push(`<tr><td>Descuento comercial</td><td class="r">− ${m(r.dExtra)}</td><td class="r">− ${m(r.dMens)}</td></tr>`);
-  if (Math.abs(r.ajImpl) >= 0.5 || Math.abs(r.ajMens) >= 0.5) dsc.push(`<tr><td>Ajuste comercial</td><td class="r">${r.ajImpl < 0 ? "− " : ""}${m(Math.abs(r.ajImpl))}</td><td class="r">${r.ajMens < 0 ? "− " : ""}${m(Math.abs(r.ajMens))}</td></tr>`);
   if (r.igv > 0) dsc.push(`<tr><td>IGV (${r.igv}%)</td><td class="r">${m(r.iImpl)}</td><td class="r">${m(r.iMens)}</td></tr>`);
+  if (Math.abs(r.ajImpl) > 0.005 || Math.abs(r.ajMens) > 0.005) dsc.push(`<tr><td>Ajuste comercial</td><td class="r">${r.ajImpl < 0 ? "− " : ""}${m(Math.abs(r.ajImpl))}</td><td class="r">${r.ajMens < 0 ? "− " : ""}${m(Math.abs(r.ajMens))}</td></tr>`);
   S.push(`<table class="anexo"><tr><th>Servicio</th><th class="r">Implementación</th><th class="r">Mensualidad</th></tr>${filas}${dsc.join("")}
     <tr class="tot"><td><b>Total</b></td><td class="r"><b>${m(r.totImpl)}</b></td><td class="r"><b>${m(r.totMens)}</b></td></tr></table>`);
   P(`<b>Condiciones de este anexo</b>`);
